@@ -1,0 +1,106 @@
+# ============================================================
+# PackSure AI — .gitignore
+# ============================================================
+
+# ----- SECRETS (NEVER COMMIT) -----
+.env
+.env.local
+.env.production
+.env.staging
+*.key
+*.pem
+*.secret
+
+# ----- Node / React / Vite -----
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ----- Virtual Environments -----
+venv/
+.venv/
+env/
+.env_python/
+pyenv/
+
+# ----- Testing / Coverage -----
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+coverage.xml
+*.coveragerc
+
+# ----- Build Artifacts -----
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+
+# ----- Logs -----
+logs/
+*.log
+*.log.*
+
+# ----- Temporary Files -----
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# ----- IDE -----
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----- OS -----
+.DS_Store
+.AppleDouble
+.LSOverride
+ehthumbs.db
+
+# ----- Uploads / Media -----
+uploads/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.pdf
+
+# Exceptions — allow sample images committed intentionally
+!sample-images/**/*.jpg
+!sample-images/**/*.jpeg
+!sample-images/**/*.png
+
+# ----- Database -----
+*.sqlite
+*.db
+
+# ----- Misc -----
+.mypy_cache/
+.ruff_cache/
+.cache/

@@ -1,0 +1,62 @@
+name: PackSure AI CI
+
+on:
+  push:
+    branches: [main, frontend-dev, backend-dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ----- Frontend Build -----
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: http://localhost:8000
+
+  # ----- Backend Tests -----
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/test_health.py -v
+        env:
+          GEMINI_API_KEY: placeholder
+          SUPABASE_URL: placeholder
+          SUPABASE_ANON_KEY: placeholder
+          DATABASE_URL: placeholder
+          FRONTEND_URL: http://localhost:5173

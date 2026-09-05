@@ -1,15 +1,32 @@
-// TODO: Implement routing and layout in Phase 1 (Frontend Dev)
-// This is a placeholder shell. Do not add features here yet.
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import AppShell from './components/layout/AppShell'
+import DashboardPage from './pages/Dashboard/DashboardPage'
+import NewInspectionPage from './pages/NewScan/NewInspectionPage'
+import InspectionDetailsPage from './pages/Results/InspectionDetailsPage'
+import HistoryPage from './pages/History/HistoryPage'
+import ReportsPage from './pages/Report/ReportsPage'
+import RulesPage from './pages/Rules/RulesPage'
+import SettingsPage from './pages/Settings/SettingsPage'
 
 function App() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">PackSure AI</h1>
-        <p className="text-gray-500">Legal Metrology Compliance System</p>
-        <p className="text-sm text-gray-400 mt-4">Frontend under construction</p>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/new-inspection" element={<NewInspectionPage />} />
+          <Route path="/inspection/new" element={<NewInspectionPage />} />
+          <Route path="/results/:id" element={<InspectionDetailsPage />} />
+          <Route path="/inspection/:id" element={<InspectionDetailsPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/rules" element={<RulesPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
 

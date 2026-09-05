@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import AppShell from './components/layout/AppShell'
 import DashboardPage from './pages/Dashboard/DashboardPage'
 import NewInspectionPage from './pages/NewScan/NewInspectionPage'
+import ProcessingPage from './pages/Processing/ProcessingPage'
 import InspectionDetailsPage from './pages/Results/InspectionDetailsPage'
 import HistoryPage from './pages/History/HistoryPage'
 import ReportsPage from './pages/Report/ReportsPage'
@@ -17,6 +18,7 @@ function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/new-inspection" element={<NewInspectionPage />} />
           <Route path="/inspection/new" element={<NewInspectionPage />} />
+          <Route path="/processing/:id" element={<ProcessingPage />} />
           <Route path="/results/:id" element={<InspectionDetailsPage />} />
           <Route path="/inspection/:id" element={<InspectionDetailsPage />} />
           <Route path="/history" element={<HistoryPage />} />

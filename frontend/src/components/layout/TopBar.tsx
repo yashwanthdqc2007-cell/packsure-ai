@@ -46,10 +46,16 @@ const routeMetadata: Record<string, RouteMeta> = {
 export const TopBar: React.FC<TopBarProps> = ({ title, description }) => {
   const location = useLocation()
 
-  // Match dynamic routes like /inspection/:id or /results/:id
+  // Match dynamic routes like /inspection/:id, /results/:id, /processing/:id
   const getMeta = (): RouteMeta => {
     if (title && description) {
       return { title, description }
+    }
+    if (location.pathname.startsWith('/processing/')) {
+      return {
+        title: 'Inspection Processing',
+        description: 'Executing OCR preprocessing, Gemini vision extraction, and deterministic rule evaluation',
+      }
     }
     if (
       (location.pathname.startsWith('/inspection/') && location.pathname !== '/inspection/new') ||

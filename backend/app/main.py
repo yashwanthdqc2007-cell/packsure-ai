@@ -9,7 +9,7 @@ Initializes the FastAPI app, configures CORS, and registers API routers for:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import history, rules, scans
+from app.api.routes import analytics, history, rules, scans
 from app.core.config import settings
 
 app = FastAPI(
@@ -41,4 +41,7 @@ for route in rules.router.routes:
     app.routes.append(route)
 
 for route in history.router.routes:
+    app.routes.append(route)
+
+for route in analytics.router.routes:
     app.routes.append(route)

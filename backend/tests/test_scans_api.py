@@ -603,6 +603,99 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(len(response.violations), 1)
         self.assertEqual(response.violations[0].rule_code, "LMR-R06-1-M")
 
+    # 24. process_scan_background generates report.json and calls repo.save_report with report.json
+    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    def test_process_scan_generates_json_report(self, mock_pipeline):
+        scan_id = "test-scan-report-json-24"
+        self.repo.create_scan(scan_id=scan_id)
+
+        evidence_meta = EvidenceMetadata(
+            annotated_image_path=os.path.join("storage", "scans", scan_id, "evidence.jpg"),
+            total_declarations_checked=1,
+            total_violations_found=0,
+        )
+        mock_pipeline.return_value = (
+            None,
+            ComplianceResult(
+                verdict=ComplianceVerdict.PASS,
+                compliance_score=100.0,
+                declarations=[
+                    ExtractedDeclaration(
+                        field_name="generic_name",
+                        status=DeclarationStatus.detected,
+                        raw_value="Sunflower Oil",
+                        normalized_value="Sunflower Oil",
+                        confidence=0.98,
+                    )
+                ],
+                violations=[],
+                evidence=evidence_meta,
+            ),
+            self.sharp_img,
+        )
+
+        with patch.object(self.repo, "save_report") as mock_save_report:
+            process_scan_background(
+                scan_id=scan_id,
+                image_bytes=b"dummy-image-bytes",
+                filename="oil.jpg",
+                product_category="Edible Oil",
+                user_id=None,
+                repo=self.repo,
+            )
+
+            self.assertTrue(mock_save_report.called)
+            called_scan_id = mock_save_report.call_args[0][0]
+            called_report_url = mock_save_report.call_args[1]["report_url"]
+            called_format = mock_save_report.call_args[1]["format_type"]
+
+            self.assertEqual(called_scan_id, scan_id)
+            self.assertTrue(called_report_url.endswith("report.json"))
+            self.assertFalse(called_report_url.endswith("evidence.jpg"))
+            self.assertEqual(called_format, "json")
+
+            # Verify report.json exists on disk
+            self.assertTrue(os.path.exists(called_report_url))
+
+    # 25. review_scan refreshes report.json with reviewer verdict and notes
+    def test_review_scan_updates_json_report(self):
+        scan_id = "test-scan-review-report-25"
+        self.repo.create_scan(scan_id=scan_id)
+        self.repo.update_scan(
+            scan_id,
+            {
+                "status": "complete",
+                "verdict": ComplianceVerdict.NEEDS_REVIEW.value,
+                "compliance_score": 60.0,
+                "product_category": "Snacks",
+            },
+        )
+        self.repo.save_declarations(
+            scan_id,
+            [
+                ExtractedDeclaration(
+                    field_name="consumer_care",
+                    status=DeclarationStatus.uncertain,
+                    raw_value="care@brand.com",
+                    confidence=0.5,
+                )
+            ],
+        )
+
+        review_req = ScanReviewRequest(
+            verdict=ComplianceVerdict.PASS,
+            reviewer_notes="Verified consumer care email on back label.",
+            corrected_declarations=[],
+        )
+
+        with patch.object(self.repo, "save_report") as mock_save_report:
+            res = review_scan(id=scan_id, review_req=review_req, repo=self.repo)
+            self.assertEqual(res.verdict, ComplianceVerdict.PASS)
+            self.assertTrue(mock_save_report.called)
+            called_report_url = mock_save_report.call_args[1]["report_url"]
+            self.assertTrue(called_report_url.endswith("report.json"))
+
+
 
 if __name__ == "__main__":
     unittest.main()

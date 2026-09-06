@@ -83,8 +83,10 @@ desktop.ini
 .LSOverride
 ehthumbs.db
 
-# ----- Uploads / Media -----
+# ----- Uploads / Media / Runtime Storage -----
 uploads/
+storage/
+backend/storage/
 *.jpg
 *.jpeg
 *.png

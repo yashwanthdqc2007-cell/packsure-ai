@@ -40,6 +40,7 @@ from app.schemas.scan import (
 )
 from app.services.compliance_service import process_compliance_from_bytes
 from app.services.image_service import validate_image_file
+from app.services.report_service import generate_json_report
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,23 @@ def process_scan_background(
             response_tokens=None,
             raw_response={"declarations_count": len(compliance_result.declarations)},
         )
-        if compliance_result.evidence and compliance_result.evidence.annotated_image_path:
-            repo.save_report(scan_id, report_url=compliance_result.evidence.annotated_image_path)
+        try:
+            report_json_path = os.path.join(scan_dir, "report.json")
+            report_path = generate_json_report(
+                scan_id=scan_id,
+                compliance_result=compliance_result,
+                product_category=product_category,
+                image_path=raw_image_path,
+                evidence_path=(
+                    compliance_result.evidence.annotated_image_path
+                    if compliance_result.evidence
+                    else evidence_image_path
+                ),
+                output_path=report_json_path,
+            )
+            repo.save_report(scan_id, report_url=report_path, format_type="json")
+        except Exception as report_err:
+            logger.error(f"Failed to generate inspection report for {scan_id}: {report_err}", exc_info=True)
 
         # 6. Finalize Scan Record
         repo.update_scan(
@@ -312,6 +328,31 @@ def review_scan(
 
         repo.delete_child_records(id)
         repo.save_declarations(id, list(decl_map.values()))
+
+    # 3. Regenerate JSON inspection report to reflect review resolution
+    try:
+        scan_dir = os.path.join(LOCAL_STORAGE_BASE, id)
+        report_json_path = os.path.join(scan_dir, "report.json")
+        current_decls = repo.get_declarations(id)
+        current_viols = repo.get_violations(id)
+        report_path = generate_json_report(
+            scan_id=id,
+            verdict=target_verdict,
+            compliance_score=scan.get("compliance_score"),
+            product_category=scan.get("product_category"),
+            declarations=current_decls,
+            violations=current_viols,
+            image_path=scan.get("image_url"),
+            evidence_path=scan.get("evidence_image_url"),
+            output_path=report_json_path,
+            created_at=scan.get("created_at"),
+            completed_at=scan.get("completed_at"),
+            status=scan.get("status", "complete"),
+            reviewer_notes=review_req.reviewer_notes,
+        )
+        repo.save_report(id, report_url=report_path, format_type="json")
+    except Exception as report_err:
+        logger.error(f"Failed to refresh inspection report after review for {id}: {report_err}", exc_info=True)
 
     # Return updated full scan payload
     return get_scan(id=id, repo=repo)

@@ -9,7 +9,7 @@ Initializes the FastAPI app, configures CORS, and registers API routers for:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import rules, scans
+from app.api.routes import history, rules, scans
 from app.core.config import settings
 
 app = FastAPI(
@@ -33,9 +33,12 @@ async def health_check():
     return {"status": "ok", "service": "packsure-ai-backend"}
 
 
-# Register Phase 1 & 7 API Routes
+# Register Phase 1, 7 & 8 API Routes
 for route in scans.router.routes:
     app.routes.append(route)
 
 for route in rules.router.routes:
+    app.routes.append(route)
+
+for route in history.router.routes:
     app.routes.append(route)

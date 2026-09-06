@@ -1,17 +1,16 @@
 """
-PackSure AI — FastAPI Application Entry Point
+PackSure AI — FastAPI Application Entry Point.
 
-This module initializes the FastAPI app, configures CORS,
-and registers all API routers.
-
-TODO (Backend Dev):
-- Register route handlers for scans, history, analytics, rules
-- Add startup/shutdown lifecycle hooks for DB and Gemini client
-- Add global exception handlers
+Initializes the FastAPI app, configures CORS, and registers API routers for:
+- /api/v1/scans
+- /api/v1/rules
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routes import rules, scans
+from app.core.config import settings
 
 app = FastAPI(
     title="PackSure AI",
@@ -19,10 +18,9 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# TODO: Read allowed origins from config / .env
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[settings.frontend_url, "http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,9 +33,9 @@ async def health_check():
     return {"status": "ok", "service": "packsure-ai-backend"}
 
 
-# TODO: Register routers here after they are implemented
-# from app.api.routes import scans, history, analytics, rules
-# app.include_router(scans.router, prefix="/api/v1")
-# app.include_router(history.router, prefix="/api/v1")
-# app.include_router(analytics.router, prefix="/api/v1")
-# app.include_router(rules.router, prefix="/api/v1")
+# Register Phase 1 & 7 API Routes
+for route in scans.router.routes:
+    app.routes.append(route)
+
+for route in rules.router.routes:
+    app.routes.append(route)

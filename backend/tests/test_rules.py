@@ -212,5 +212,98 @@ class TestRule26ExemptionHelper(unittest.TestCase):
         self.assertFalse(check_rule26_exemption("8 g", category="Beedi"))
 
 
+class TestRulesEndpointContract(unittest.TestCase):
+    """Tests for GET /api/v1/rules response schema conforming to docs/api.md."""
+
+    def test_no_category_filter_returns_all_active_rules(self):
+        """When no category filter is passed, category is 'all' and returns active rules."""
+        from app.api.routes.rules import get_rules, RulesListResponse
+
+        res: RulesListResponse = get_rules()
+        data = res.model_dump()
+
+        self.assertEqual(data["category"], "all")
+        self.assertGreater(data["total"], 0)
+        self.assertEqual(len(data["rules"]), data["total"])
+
+    def test_category_filter_returns_category_and_matching_rules(self):
+        """When category filter is applied, category is preserved and matching rules returned."""
+        from app.api.routes.rules import get_rules, RulesListResponse
+
+        res: RulesListResponse = get_rules(category="Food Grains")
+        data = res.model_dump()
+
+        self.assertEqual(data["category"], "Food Grains")
+        self.assertGreater(data["total"], 0)
+        self.assertEqual(len(data["rules"]), data["total"])
+
+    def test_exact_top_level_response_keys(self):
+        """Top-level response must strictly contain only 'category', 'total', and 'rules'."""
+        from app.api.routes.rules import get_rules, RulesListResponse
+
+        res: RulesListResponse = get_rules()
+        data = res.model_dump()
+
+        expected_keys = {"category", "total", "rules"}
+        self.assertEqual(set(data.keys()), expected_keys)
+
+    def test_exact_rule_item_field_names(self):
+        """Every rule item must strictly contain the 9 documented field names."""
+        from app.api.routes.rules import get_rules, RulesListResponse
+
+        res: RulesListResponse = get_rules()
+        data = res.model_dump()
+
+        expected_rule_keys = {
+            "id",
+            "rule_code",
+            "title",
+            "description",
+            "field_name",
+            "validation_type",
+            "severity",
+            "version",
+            "active",
+        }
+
+        self.assertGreater(len(data["rules"]), 0)
+        for rule_item in data["rules"]:
+            self.assertEqual(set(rule_item.keys()), expected_rule_keys)
+            self.assertIsInstance(rule_item["id"], str)
+            self.assertIsInstance(rule_item["rule_code"], str)
+            self.assertIsInstance(rule_item["title"], str)
+            self.assertIsInstance(rule_item["description"], str)
+            self.assertIsInstance(rule_item["field_name"], str)
+            self.assertIsInstance(rule_item["validation_type"], str)
+            self.assertIn(rule_item["severity"], ("critical", "major", "minor"))
+            self.assertIsInstance(rule_item["version"], str)
+            self.assertIsInstance(rule_item["active"], bool)
+
+    def test_empty_category_result(self):
+        """Querying an unknown or non-existent category returns total=0 and empty rules list."""
+        from app.api.routes.rules import get_rules, RulesListResponse
+
+        res: RulesListResponse = get_rules(category="nonexistent_category_xyz")
+        data = res.model_dump()
+
+        self.assertEqual(data["category"], "nonexistent_category_xyz")
+        self.assertEqual(data["total"], 0)
+        self.assertEqual(data["rules"], [])
+
+    def test_non_perishable_category_filters_expiry_date_rule(self):
+        """Non-perishable categories (e.g., Electronics) exclude perishable expiry date rules."""
+        from app.api.routes.rules import get_rules, RulesListResponse
+
+        all_res: RulesListResponse = get_rules()
+        elec_res: RulesListResponse = get_rules(category="Electronics")
+
+        all_fields = [r.field_name for r in all_res.rules]
+        elec_fields = [r.field_name for r in elec_res.rules]
+
+        self.assertIn("expiry_date", all_fields)
+        self.assertNotIn("expiry_date", elec_fields)
+        self.assertEqual(elec_res.total, len(elec_res.rules))
+
+
 if __name__ == "__main__":
     unittest.main()

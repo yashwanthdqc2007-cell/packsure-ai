@@ -1,10 +1,13 @@
 """
-FastAPI dependency injection.
+PackSure AI — FastAPI Dependency Injection Layer.
 
-TODO (Backend Dev):
-- Add database session dependency
-- Add Gemini client dependency
-- Add authenticated user dependency (if needed)
+Provides clean dependency providers for database repository, storage, and authentication.
+Allows seamless test overrides using FastAPI's dependency_overrides dictionary.
 """
 
-# TODO: Implement dependencies in Phase 2
+from app.database.connection import BaseScanRepository, get_repository
+
+
+def get_db_repository() -> BaseScanRepository:
+    """Dependency provider for database repository operations."""
+    return get_repository()

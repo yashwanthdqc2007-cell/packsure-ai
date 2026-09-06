@@ -64,8 +64,8 @@ export const NewInspectionPage: React.FC = () => {
       setErrorMessage('Unsupported file type. Please upload a JPEG, PNG, or WebP image.')
       return
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setErrorMessage('File size exceeds 10MB limit.')
+    if (file.size > 20 * 1024 * 1024) {
+      setErrorMessage('File size exceeds 20MB limit.')
       return
     }
 
@@ -229,7 +229,7 @@ export const NewInspectionPage: React.FC = () => {
       {/* Upload Workstation */}
       <Card
         title="Package Upload Workstation"
-        subtitle="Supported formats: JPEG, PNG, WebP (Max: 10MB)"
+        subtitle="Supported formats: JPEG, PNG, WebP (Max: 20MB)"
       >
         <div className="space-y-6">
           {/* File Dropzone Area */}

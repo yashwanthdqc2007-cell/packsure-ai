@@ -66,12 +66,46 @@ class TestImageFileValidation(unittest.TestCase):
         self.assertIsNone(img)
 
     def test_oversized_bytes_rejected(self):
-        # 10MB + 1 byte
+        # 20MB + 1 byte
         oversized = b"\xff\xd8\xff" + b"\x00" * (MAX_FILE_SIZE_BYTES + 1)
         is_valid, msg, img = validate_image_file(oversized, "large.jpg")
         self.assertFalse(is_valid)
-        self.assertIn("10mb", msg.lower())
+        self.assertIn("20mb", msg.lower())
         self.assertIsNone(img)
+
+    def test_exact_20mb_accepted_by_size_validation(self):
+        # Exactly 20 MiB (starts with JPEG magic bytes)
+        exact_20mb = b"\xff\xd8\xff" + b"\x00" * (MAX_FILE_SIZE_BYTES - 3)
+        self.assertEqual(len(exact_20mb), MAX_FILE_SIZE_BYTES)
+        is_valid, msg, _ = validate_image_file(exact_20mb, "exact_20mb.jpg")
+        # Passes size check (fails at decode stage because body is padding zeros)
+        self.assertNotIn("20mb", (msg or "").lower())
+        self.assertIn("corrupt", (msg or "").lower())
+
+    def test_just_below_20mb_accepted_by_size_validation(self):
+        # 20 MiB - 100 bytes
+        below_20mb = b"\xff\xd8\xff" + b"\x00" * (MAX_FILE_SIZE_BYTES - 103)
+        self.assertEqual(len(below_20mb), MAX_FILE_SIZE_BYTES - 100)
+        is_valid, msg, _ = validate_image_file(below_20mb, "below_20mb.jpg")
+        # Passes size check
+        self.assertNotIn("20mb", (msg or "").lower())
+        self.assertIn("corrupt", (msg or "").lower())
+
+    def test_just_above_20mb_rejected(self):
+        # 20 MiB + 1 byte
+        above_20mb = b"\xff\xd8\xff" + b"\x00" * (MAX_FILE_SIZE_BYTES + 1 - 3)
+        self.assertEqual(len(above_20mb), MAX_FILE_SIZE_BYTES + 1)
+        is_valid, msg, _ = validate_image_file(above_20mb, "above_20mb.jpg")
+        self.assertFalse(is_valid)
+        self.assertIn("20mb", msg.lower())
+
+    def test_21mb_rejected(self):
+        # 21 MiB
+        twenty_one_mb = b"\xff\xd8\xff" + b"\x00" * (21 * 1024 * 1024 - 3)
+        self.assertEqual(len(twenty_one_mb), 21 * 1024 * 1024)
+        is_valid, msg, _ = validate_image_file(twenty_one_mb, "21mb.jpg")
+        self.assertFalse(is_valid)
+        self.assertIn("20mb", msg.lower())
 
     def test_unsupported_format_rejected(self):
         # PDF / Text magic bytes

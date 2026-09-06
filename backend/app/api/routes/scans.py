@@ -177,7 +177,7 @@ async def create_scan(
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=err_msg or "Invalid image file format or size exceeds 10MB limit.",
+            detail=err_msg or "Invalid image file format or size exceeds 20MB limit.",
         )
 
     # 3. Create Pending Scan Record

@@ -36,7 +36,7 @@ from app.schemas.image import (
 # Constants & Configurable Prototype Engineering Baselines
 # =====================================================================
 
-MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MiB limit per docs/api.md
+MAX_FILE_SIZE_BYTES: int = 20 * 1024 * 1024  # 20 MiB limit per docs/api.md
 SUPPORTED_IMAGE_TYPES: Tuple[str, ...] = ("image/jpeg", "image/png", "image/webp")
 
 # Resolution Baselines (Pixel Dimensions)
@@ -75,7 +75,7 @@ def validate_image_file(
 
     Verifies:
     1. Non-empty byte sequence.
-    2. File size <= 10 MiB limit.
+    2. File size <= 20 MiB limit.
     3. Magic byte header signatures (JPEG, PNG, WebP).
     4. Successful in-memory image decoding without corrupt blocks.
 
@@ -93,7 +93,7 @@ def validate_image_file(
         return False, "Image file is empty", None
 
     if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-        return False, f"Image file size ({len(file_bytes)} bytes) exceeds the 10MB limit", None
+        return False, f"Image file size ({len(file_bytes)} bytes) exceeds the 20MB limit", None
 
     # Verify Magic Byte Signatures
     # JPEG: FF D8 FF

@@ -589,6 +589,7 @@ class SupabaseScanRepository(BaseScanRepository):
                 {
                     "scan_id": scan_id,
                     "rule_id": v.rule_id,
+                    "rule_code": v.rule_code or v.rule_id,
                     "field_name": v.field_name,
                     "violation_type": v.violation_type.value,
                     "severity": v.severity.value,
@@ -618,12 +619,13 @@ class SupabaseScanRepository(BaseScanRepository):
         data = res.json()
         results = []
         for row in data:
+            rule_code_val = row.get("rule_code") or row.get("rule_id") or "LMR-RULE"
             results.append(
                 Violation(
                     id=row.get("id"),
                     scan_id=row.get("scan_id"),
                     rule_id=row.get("rule_id"),
-                    rule_code=row.get("rule_code", "LMR-RULE"),
+                    rule_code=rule_code_val,
                     field_name=row.get("field_name"),
                     violation_type=ViolationType(row["violation_type"]) if row.get("violation_type") else ViolationType.other,
                     severity=ViolationSeverity(row["severity"]) if row.get("severity") else ViolationSeverity.critical,

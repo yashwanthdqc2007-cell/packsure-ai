@@ -518,6 +518,91 @@ class TestScansAPIAndPersistence(unittest.TestCase):
 
         self.assertEqual(read_bytes, test_bytes)
 
+    # 21. SupabaseScanRepository save_violations persists rule_code
+    @patch("app.database.connection.requests.post")
+    def test_supabase_save_violations_persists_rule_code(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, status_code=201)
+        repo = SupabaseScanRepository()
+        repo.supabase_url = "https://example.supabase.co"
+        repo.supabase_key = "dummy-key"
+
+        v = Violation(
+            rule_id="LMR-R06-1-M",
+            rule_code="LMR-R06-1-M",
+            field_name="expiry_date",
+            violation_type=ViolationType.invalid_format,
+            severity=ViolationSeverity.critical,
+            description="Invalid date format",
+        )
+        repo.save_violations("test-scan-save-viol", [v])
+
+        self.assertTrue(mock_post.called)
+        payload = mock_post.call_args[1]["json"]
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["rule_code"], "LMR-R06-1-M")
+        self.assertEqual(payload[0]["rule_id"], "LMR-R06-1-M")
+
+    # 22. SupabaseScanRepository get_violations falls back when rule_code is NULL in DB
+    @patch("app.database.connection.requests.get")
+    def test_supabase_get_violations_null_rule_code_fallback(self, mock_get):
+        mock_get.return_value = MagicMock(
+            ok=True,
+            status_code=200,
+            json=lambda: [
+                {
+                    "id": "v-1",
+                    "scan_id": "test-scan-null-rule",
+                    "rule_id": "LMR-R06-1-M",
+                    "rule_code": None,  # NULL in DB
+                    "field_name": "expiry_date",
+                    "violation_type": "invalid_format",
+                    "severity": "critical",
+                    "description": "Invalid date format",
+                    "created_at": "2026-09-06T12:00:00Z",
+                }
+            ],
+        )
+        repo = SupabaseScanRepository()
+        repo.supabase_url = "https://example.supabase.co"
+        repo.supabase_key = "dummy-key"
+
+        violations = repo.get_violations("test-scan-null-rule")
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].rule_code, "LMR-R06-1-M")
+        self.assertEqual(violations[0].rule_id, "LMR-R06-1-M")
+
+    # 23. GET /api/v1/scans/{id} succeeds when repository returns violation with resolved rule_code
+    def test_get_scan_with_null_rule_code_record(self):
+        mock_repo = MagicMock(spec=BaseScanRepository)
+        mock_repo.get_scan.return_value = {
+            "id": "scan-with-viol",
+            "status": "complete",
+            "verdict": "FAIL",
+            "compliance_score": 70.0,
+            "product_category": "food",
+            "image_url": "storage/scans/scan-with-viol/original.jpg",
+            "processed_image_url": "storage/scans/scan-with-viol/original.jpg",
+            "evidence_image_url": "storage/scans/scan-with-viol/evidence.jpg",
+            "created_at": "2026-09-06T12:00:00Z",
+            "completed_at": "2026-09-06T12:01:00Z",
+        }
+        mock_repo.get_declarations.return_value = []
+        mock_repo.get_violations.return_value = [
+            Violation(
+                rule_id="LMR-R06-1-M",
+                rule_code="LMR-R06-1-M",
+                field_name="expiry_date",
+                violation_type=ViolationType.invalid_format,
+                severity=ViolationSeverity.critical,
+                description="Invalid date format",
+            )
+        ]
+
+        response = get_scan(id="scan-with-viol", repo=mock_repo)
+        self.assertEqual(response.status, ScanStatus.complete)
+        self.assertEqual(len(response.violations), 1)
+        self.assertEqual(response.violations[0].rule_code, "LMR-R06-1-M")
+
 
 if __name__ == "__main__":
     unittest.main()

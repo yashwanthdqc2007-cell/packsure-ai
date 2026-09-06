@@ -6,13 +6,17 @@ TODO (Backend Dev):
 - Validate on startup
 """
 
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseModel as BaseSettings
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
     supabase_url: str = ""
     supabase_anon_key: str = ""
     database_url: str = ""

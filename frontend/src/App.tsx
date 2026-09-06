@@ -23,6 +23,7 @@ function App() {
           <Route path="/inspection/:id" element={<InspectionDetailsPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/reports/:id" element={<ReportsPage />} />
           <Route path="/rules" element={<RulesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

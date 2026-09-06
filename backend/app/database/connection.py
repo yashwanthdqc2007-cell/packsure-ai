@@ -12,8 +12,10 @@ Architecture:
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 import logging
+import math
 from typing import Any, Dict, List, Optional
 import requests
 
@@ -27,6 +29,26 @@ from app.schemas.ocr import BoundingBox
 from app.schemas.violation import Violation, ViolationSeverity, ViolationType
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_iso_datetime(val: Any) -> Optional[datetime]:
+    """Parse ISO8601 string or date into UTC datetime object."""
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    if not isinstance(val, str):
+        return None
+    try:
+        clean_str = val.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        try:
+            dt = datetime.strptime(val[:10], "%Y-%m-%d")
+            return dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
 
 
 class BaseScanRepository(ABC):
@@ -93,6 +115,28 @@ class BaseScanRepository(ABC):
     @abstractmethod
     def delete_child_records(self, scan_id: str) -> None:
         """Idempotently purge child declarations, violations, AI analysis, and reports on scan rerun."""
+        pass
+
+    @abstractmethod
+    def query_history(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        verdict: Optional[str] = None,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Query paginated historical scans with optional filters."""
+        pass
+
+    @abstractmethod
+    def query_analytics(
+        self,
+        period: str = "7d",
+    ) -> Dict[str, Any]:
+        """Retrieve aggregated compliance metrics, pass rates, category distributions, and daily activity trends."""
         pass
 
 
@@ -194,6 +238,212 @@ class InMemoryScanRepository(BaseScanRepository):
         self.violations.pop(scan_id, None)
         self.ai_analysis.pop(scan_id, None)
         self.reports.pop(scan_id, None)
+
+    def query_history(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        verdict: Optional[str] = None,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Query paginated historical scans with optional filters."""
+        page = max(1, page)
+        limit = max(1, min(100, limit))
+
+        filtered: List[Dict[str, Any]] = []
+
+        from_dt = _parse_iso_datetime(from_date) if from_date else None
+        to_dt = _parse_iso_datetime(to_date) if to_date else None
+        if to_dt and to_date and len(to_date.strip()) <= 10:
+            to_dt = to_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        for scan_id, scan in self.scans.items():
+            # Resolve product name from extracted generic_name declaration
+            decls = self.declarations.get(scan_id, [])
+            product_name = None
+            for d in decls:
+                if d.field_name == "generic_name":
+                    product_name = d.normalized_value or d.raw_value
+                    if product_name:
+                        break
+
+            # Verdict filter
+            if verdict:
+                scan_verdict = scan.get("verdict")
+                if not scan_verdict or scan_verdict.upper() != verdict.strip().upper():
+                    continue
+
+            # Category filter
+            if category:
+                cat_filter = category.strip().lower()
+                scan_cat = (scan.get("product_category") or "").lower()
+                if cat_filter not in scan_cat:
+                    continue
+
+            # Date boundaries
+            scan_dt = _parse_iso_datetime(scan.get("created_at"))
+            if from_dt and scan_dt and scan_dt < from_dt:
+                continue
+            if to_dt and scan_dt and scan_dt > to_dt:
+                continue
+
+            # Search filter (across scan ID, category, product name)
+            if search:
+                s_query = search.strip().lower()
+                id_match = s_query in scan["id"].lower()
+                cat_match = bool(scan.get("product_category") and s_query in scan["product_category"].lower())
+                name_match = bool(product_name and s_query in product_name.lower())
+                if not (id_match or cat_match or name_match):
+                    continue
+
+            filtered.append(
+                {
+                    "id": scan["id"],
+                    "product_name": product_name,
+                    "category": scan.get("product_category"),
+                    "scanned_at": scan.get("created_at"),
+                    "verdict": scan.get("verdict"),
+                    "compliance_score": scan.get("compliance_score"),
+                    "status": scan.get("status", "complete"),
+                    "_sort_dt": scan_dt or datetime.min.replace(tzinfo=timezone.utc),
+                }
+            )
+
+        # Sort chronological descending (newest first)
+        filtered.sort(key=lambda item: item["_sort_dt"], reverse=True)
+
+        total = len(filtered)
+        total_pages = math.ceil(total / limit) if total > 0 else 0
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_items = filtered[start:end]
+
+        for item in paginated_items:
+            item.pop("_sort_dt", None)
+
+        return {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "results": paginated_items,
+        }
+
+    def query_analytics(
+        self,
+        period: str = "7d",
+    ) -> Dict[str, Any]:
+        """Compute aggregated compliance statistics, daily trends, top violations, and category breakdown."""
+        now = datetime.now(timezone.utc)
+        cutoff_dt: Optional[datetime] = None
+
+        clean_period = period.strip().lower() if period else "7d"
+        if clean_period == "7d":
+            cutoff_dt = now - timedelta(days=7)
+        elif clean_period == "30d":
+            cutoff_dt = now - timedelta(days=30)
+        elif clean_period == "all":
+            cutoff_dt = None
+        else:
+            cutoff_dt = now - timedelta(days=7)
+
+        period_scans: List[Dict[str, Any]] = []
+        for scan in self.scans.values():
+            scan_dt = _parse_iso_datetime(scan.get("created_at"))
+            if cutoff_dt and scan_dt and scan_dt < cutoff_dt:
+                continue
+            period_scans.append(scan)
+
+        total_scans = len(period_scans)
+        pass_count = sum(1 for s in period_scans if s.get("verdict") == "PASS")
+        fail_count = sum(1 for s in period_scans if s.get("verdict") == "FAIL")
+        review_count = sum(1 for s in period_scans if s.get("verdict") == "NEEDS_REVIEW")
+        pass_rate = round((pass_count / total_scans) * 100.0, 1) if total_scans > 0 else 0.0
+
+        # Daily trend aggregation
+        daily_groups: Dict[str, Dict[str, Any]] = {}
+        for s in period_scans:
+            s_dt = _parse_iso_datetime(s.get("created_at"))
+            date_key = s_dt.strftime("%Y-%m-%d") if s_dt else now.strftime("%Y-%m-%d")
+            day_name = s_dt.strftime("%a") if s_dt else now.strftime("%a")
+
+            if date_key not in daily_groups:
+                daily_groups[date_key] = {
+                    "day": day_name,
+                    "date": date_key,
+                    "scans": 0,
+                    "compliant": 0,
+                    "non_compliant": 0,
+                    "needs_review": 0,
+                }
+            daily_groups[date_key]["scans"] += 1
+            verdict = s.get("verdict")
+            if verdict == "PASS":
+                daily_groups[date_key]["compliant"] += 1
+            elif verdict == "FAIL":
+                daily_groups[date_key]["non_compliant"] += 1
+            elif verdict == "NEEDS_REVIEW":
+                daily_groups[date_key]["needs_review"] += 1
+
+        daily_trend = [daily_groups[k] for k in sorted(daily_groups.keys())]
+
+        # Top violations aggregation
+        violation_counts: Counter = Counter()
+        violation_descriptions: Dict[str, str] = {}
+        period_scan_ids = {s["id"] for s in period_scans}
+
+        for s_id in period_scan_ids:
+            for v in self.violations.get(s_id, []):
+                r_code = v.rule_code or "Unknown Rule"
+                violation_counts[r_code] += 1
+                if r_code not in violation_descriptions and v.description:
+                    violation_descriptions[r_code] = v.description
+
+        top_violations: List[Dict[str, Any]] = []
+        for r_code, count in violation_counts.most_common():
+            top_violations.append(
+                {
+                    "rule_code": r_code,
+                    "description": violation_descriptions.get(r_code, r_code),
+                    "count": count,
+                }
+            )
+
+        # By category aggregation
+        category_stats: Dict[str, Dict[str, Any]] = {}
+        for s in period_scans:
+            cat = s.get("product_category")
+            if not cat:
+                continue
+            if cat not in category_stats:
+                category_stats[cat] = {
+                    "total": 0,
+                    "pass": 0,
+                    "fail": 0,
+                    "review": 0,
+                }
+            category_stats[cat]["total"] += 1
+            verdict = s.get("verdict")
+            if verdict == "PASS":
+                category_stats[cat]["pass"] += 1
+            elif verdict == "FAIL":
+                category_stats[cat]["fail"] += 1
+            elif verdict == "NEEDS_REVIEW":
+                category_stats[cat]["review"] += 1
+
+        return {
+            "total_scans": total_scans,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "review_count": review_count,
+            "pass_rate": pass_rate,
+            "daily_trend": daily_trend,
+            "top_violations": top_violations,
+            "by_category": category_stats,
+        }
 
 
 class SupabaseScanRepository(BaseScanRepository):
@@ -449,6 +699,212 @@ class SupabaseScanRepository(BaseScanRepository):
             params={"scan_id": f"eq.{scan_id}"},
             timeout=10,
         )
+
+    def query_history(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        verdict: Optional[str] = None,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._verify_configuration()
+        page = max(1, page)
+        limit = max(1, min(100, limit))
+        offset = (page - 1) * limit
+
+        headers = self._get_headers()
+        headers["Prefer"] = "count=exact"
+
+        params: Dict[str, Any] = {
+            "select": "*,extracted_declarations(field_name,raw_value,normalized_value)",
+            "order": "created_at.desc",
+            "limit": limit,
+            "offset": offset,
+        }
+
+        if verdict:
+            params["verdict"] = f"eq.{verdict.strip().upper()}"
+        if category:
+            params["product_category"] = f"ilike.%{category.strip()}%"
+        if from_date:
+            params["created_at"] = f"gte.{from_date.strip()}"
+        if to_date:
+            params["created_at"] = f"lte.{to_date.strip()}"
+
+        res = requests.get(
+            f"{self.supabase_url}/rest/v1/scans",
+            headers=headers,
+            params=params,
+            timeout=10,
+        )
+        if not res.ok:
+            raise RuntimeError(f"Failed to query history from Supabase: {res.status_code} {res.text}")
+
+        total = 0
+        content_range = res.headers.get("Content-Range")
+        if content_range and "/" in content_range:
+            try:
+                total = int(content_range.split("/")[1])
+            except (ValueError, IndexError):
+                total = len(res.json()) if isinstance(res.json(), list) else 0
+
+        data = res.json() if isinstance(res.json(), list) else []
+        results = []
+        for row in data:
+            decls = row.get("extracted_declarations", [])
+            product_name = None
+            if isinstance(decls, list):
+                for d in decls:
+                    if d.get("field_name") == "generic_name":
+                        product_name = d.get("normalized_value") or d.get("raw_value")
+                        if product_name:
+                            break
+
+            results.append(
+                {
+                    "id": row.get("id"),
+                    "product_name": product_name,
+                    "category": row.get("product_category"),
+                    "scanned_at": row.get("created_at"),
+                    "verdict": row.get("verdict"),
+                    "compliance_score": row.get("compliance_score"),
+                    "status": row.get("status", "complete"),
+                }
+            )
+
+        total_pages = math.ceil(total / limit) if total > 0 else 0
+
+        return {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "results": results,
+        }
+
+    def query_analytics(
+        self,
+        period: str = "7d",
+    ) -> Dict[str, Any]:
+        self._verify_configuration()
+        now = datetime.now(timezone.utc)
+        clean_period = period.strip().lower() if period else "7d"
+        if clean_period == "7d":
+            cutoff_dt = now - timedelta(days=7)
+        elif clean_period == "30d":
+            cutoff_dt = now - timedelta(days=30)
+        elif clean_period == "all":
+            cutoff_dt = None
+        else:
+            cutoff_dt = now - timedelta(days=7)
+
+        params: Dict[str, Any] = {
+            "select": "id,verdict,product_category,created_at",
+            "order": "created_at.asc",
+        }
+        if cutoff_dt:
+            params["created_at"] = f"gte.{cutoff_dt.isoformat()}"
+
+        res_scans = requests.get(
+            f"{self.supabase_url}/rest/v1/scans",
+            headers=self._get_headers(),
+            params=params,
+            timeout=10,
+        )
+        if not res_scans.ok:
+            raise RuntimeError(f"Failed to fetch analytics scans from Supabase: {res_scans.status_code} {res_scans.text}")
+
+        scans_data = res_scans.json() if isinstance(res_scans.json(), list) else []
+
+        total_scans = len(scans_data)
+        pass_count = sum(1 for s in scans_data if s.get("verdict") == "PASS")
+        fail_count = sum(1 for s in scans_data if s.get("verdict") == "FAIL")
+        review_count = sum(1 for s in scans_data if s.get("verdict") == "NEEDS_REVIEW")
+        pass_rate = round((pass_count / total_scans) * 100.0, 1) if total_scans > 0 else 0.0
+
+        daily_groups: Dict[str, Dict[str, Any]] = {}
+        for s in scans_data:
+            s_dt = _parse_iso_datetime(s.get("created_at"))
+            date_key = s_dt.strftime("%Y-%m-%d") if s_dt else now.strftime("%Y-%m-%d")
+            day_name = s_dt.strftime("%a") if s_dt else now.strftime("%a")
+            if date_key not in daily_groups:
+                daily_groups[date_key] = {
+                    "day": day_name,
+                    "date": date_key,
+                    "scans": 0,
+                    "compliant": 0,
+                    "non_compliant": 0,
+                    "needs_review": 0,
+                }
+            daily_groups[date_key]["scans"] += 1
+            verdict = s.get("verdict")
+            if verdict == "PASS":
+                daily_groups[date_key]["compliant"] += 1
+            elif verdict == "FAIL":
+                daily_groups[date_key]["non_compliant"] += 1
+            elif verdict == "NEEDS_REVIEW":
+                daily_groups[date_key]["needs_review"] += 1
+
+        daily_trend = [daily_groups[k] for k in sorted(daily_groups.keys())]
+
+        v_params: Dict[str, Any] = {"select": "rule_code,description,created_at"}
+        if cutoff_dt:
+            v_params["created_at"] = f"gte.{cutoff_dt.isoformat()}"
+
+        res_v = requests.get(
+            f"{self.supabase_url}/rest/v1/violations",
+            headers=self._get_headers(),
+            params=v_params,
+            timeout=10,
+        )
+        violations_data = res_v.json() if res_v.ok and isinstance(res_v.json(), list) else []
+
+        violation_counts: Counter = Counter()
+        violation_descriptions: Dict[str, str] = {}
+        for v in violations_data:
+            r_code = v.get("rule_code") or "Unknown Rule"
+            violation_counts[r_code] += 1
+            if r_code not in violation_descriptions and v.get("description"):
+                violation_descriptions[r_code] = v.get("description")
+
+        top_violations = [
+            {
+                "rule_code": r_code,
+                "description": violation_descriptions.get(r_code, r_code),
+                "count": count,
+            }
+            for r_code, count in violation_counts.most_common()
+        ]
+
+        category_stats: Dict[str, Dict[str, Any]] = {}
+        for s in scans_data:
+            cat = s.get("product_category")
+            if not cat:
+                continue
+            if cat not in category_stats:
+                category_stats[cat] = {"total": 0, "pass": 0, "fail": 0, "review": 0}
+            category_stats[cat]["total"] += 1
+            verdict = s.get("verdict")
+            if verdict == "PASS":
+                category_stats[cat]["pass"] += 1
+            elif verdict == "FAIL":
+                category_stats[cat]["fail"] += 1
+            elif verdict == "NEEDS_REVIEW":
+                category_stats[cat]["review"] += 1
+
+        return {
+            "total_scans": total_scans,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "review_count": review_count,
+            "pass_rate": pass_rate,
+            "daily_trend": daily_trend,
+            "top_violations": top_violations,
+            "by_category": category_stats,
+        }
 
 
 def get_repository() -> BaseScanRepository:

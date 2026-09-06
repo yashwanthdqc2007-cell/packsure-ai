@@ -479,6 +479,7 @@ class SupabaseScanRepository(BaseScanRepository):
         payload = {
             "id": scan_id,
             "user_id": user_id,
+            "product_category": product_category,
             "status": "pending",
             "image_url": image_url,
             "created_at": datetime.now(timezone.utc).isoformat(),

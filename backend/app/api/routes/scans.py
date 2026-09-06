@@ -119,19 +119,22 @@ def process_scan_background(
             logger.error(f"Failed to generate inspection report for {scan_id}: {report_err}", exc_info=True)
 
         # 6. Finalize Scan Record
+        normalized_raw_path = raw_image_path.replace("\\", "/")
+        normalized_evidence_path = (
+            compliance_result.evidence.annotated_image_path.replace("\\", "/")
+            if compliance_result.evidence and compliance_result.evidence.annotated_image_path
+            else None
+        )
         repo.update_scan(
             scan_id,
             {
                 "status": "complete",
                 "verdict": compliance_result.verdict.value,
                 "compliance_score": compliance_result.compliance_score,
-                "image_url": raw_image_path,
-                "processed_image_url": raw_image_path,
-                "evidence_image_url": (
-                    compliance_result.evidence.annotated_image_path
-                    if compliance_result.evidence
-                    else None
-                ),
+                "product_category": product_category,
+                "image_url": normalized_raw_path,
+                "processed_image_url": normalized_raw_path,
+                "evidence_image_url": normalized_evidence_path,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             },
         )

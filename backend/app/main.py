@@ -1,16 +1,23 @@
-"""
-PackSure AI — FastAPI Application Entry Point.
-
-Initializes the FastAPI app, configures CORS, and registers API routers for:
-- /api/v1/scans
-- /api/v1/rules
-"""
-
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import analytics, history, rules, scans
 from app.core.config import settings
+
+
+def _resolve_storage_directory() -> str:
+    """Resolve storage directory path robustly across repository root and backend CWD."""
+    package_storage = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage"))
+    if os.path.exists(package_storage):
+        return package_storage
+    cwd_storage = os.path.abspath("storage")
+    if os.path.exists(cwd_storage):
+        return cwd_storage
+    os.makedirs(package_storage, exist_ok=True)
+    return package_storage
+
 
 app = FastAPI(
     title="PackSure AI",
@@ -45,3 +52,7 @@ for route in history.router.routes:
 
 for route in analytics.router.routes:
     app.routes.append(route)
+
+# Mount local runtime storage directory for visual evidence and report artifacts
+_storage_dir = _resolve_storage_directory()
+app.mount("/storage", StaticFiles(directory=_storage_dir), name="storage")

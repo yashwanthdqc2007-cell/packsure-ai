@@ -5,8 +5,10 @@ import {
   AlertTriangle,
   ArrowLeft,
   Calendar,
+  Check,
   CheckCircle2,
   Crosshair,
+  Edit3,
   ExternalLink,
   Eye,
   FileCheck,
@@ -16,15 +18,25 @@ import {
   RefreshCw,
   Scale,
   ShieldAlert,
+  ShieldCheck,
   Tag,
+  Undo2,
+  UserCheck,
+  X,
   XCircle,
 } from 'lucide-react'
 import Card from '../../components/common/Card'
 import StatusBadge from '../../components/common/StatusBadge'
 import Button from '../../components/common/Button'
-import { getScan } from '../../services/scanService'
+import { getScan, reviewScan } from '../../services/scanService'
 import type { ApiErrorDetail } from '../../services/api'
-import type { ScanResponse } from '../../types'
+import type {
+  CorrectedDeclaration,
+  DeclarationStatus,
+  ExtractedDeclaration,
+  ScanResponse,
+  ScanReviewRequest,
+} from '../../types'
 
 const MAX_POLL_ATTEMPTS = 40 // 40 attempts * 1.5s = 60s max timeout
 
@@ -34,12 +46,24 @@ export const InspectionDetailsPage: React.FC = () => {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollAttemptRef = useRef<number>(0)
 
+  // Scan Data & Navigation States
   const [scan, setScan] = useState<ScanResponse | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'declarations' | 'violations' | 'evidence'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'declarations' | 'violations' | 'evidence' | 'review'>('overview')
   const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
   const [imageError, setImageError] = useState<boolean>(false)
+
+  // Human Review Workflow States
+  const [reviewerNotes, setReviewerNotes] = useState<string>('')
+  const [corrections, setCorrections] = useState<Record<string, CorrectedDeclaration>>({})
+  const [editingField, setEditingField] = useState<string | null>(null)
+  const [editRawValue, setEditRawValue] = useState<string>('')
+  const [editNormalizedValue, setEditNormalizedValue] = useState<string>('')
+  const [editStatus, setEditStatus] = useState<DeclarationStatus>('detected')
+  const [isSubmittingReview, setIsSubmittingReview] = useState<boolean>(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string | null>(null)
 
   const fetchScanDetails = async (scanId: string, isPollingAttempt: boolean = false) => {
     try {
@@ -95,6 +119,82 @@ export const InspectionDetailsPage: React.FC = () => {
     }
   }, [id])
 
+  // Open correction editor for a declaration
+  const startEditingDeclaration = (decl: ExtractedDeclaration) => {
+    const existingCorrection = corrections[decl.field_name]
+    setEditingField(decl.field_name)
+    setEditRawValue(existingCorrection?.raw_value ?? decl.raw_value ?? '')
+    setEditNormalizedValue(existingCorrection?.normalized_value ?? decl.normalized_value ?? '')
+    setEditStatus(existingCorrection?.status ?? decl.status ?? 'detected')
+    setReviewError(null)
+  }
+
+  // Save manual correction for a declaration field
+  const saveDeclarationCorrection = (fieldName: string) => {
+    setCorrections((prev) => ({
+      ...prev,
+      [fieldName]: {
+        field_name: fieldName,
+        raw_value: editRawValue.trim() || undefined,
+        normalized_value: editNormalizedValue.trim() || undefined,
+        status: editStatus,
+      },
+    }))
+    setEditingField(null)
+  }
+
+  // Remove a manual correction override
+  const removeCorrection = (fieldName: string) => {
+    setCorrections((prev) => {
+      const copy = { ...prev }
+      delete copy[fieldName]
+      return copy
+    })
+    if (editingField === fieldName) {
+      setEditingField(null)
+    }
+  }
+
+  // Submit human review resolution (PATCH /api/v1/scans/{id}/review)
+  const handleSubmitReview = async (targetVerdict: 'PASS' | 'FAIL') => {
+    if (!scan) return
+
+    if (!reviewerNotes.trim()) {
+      setReviewError('Please provide inspector reviewer notes before finalizing the verdict.')
+      return
+    }
+
+    try {
+      setIsSubmittingReview(true)
+      setReviewError(null)
+      setReviewSuccessMsg(null)
+
+      const correctedList = Object.values(corrections)
+      const payload: ScanReviewRequest = {
+        verdict: targetVerdict,
+        reviewer_notes: reviewerNotes.trim(),
+        corrected_declarations: correctedList.length > 0 ? correctedList : undefined,
+      }
+
+      const updatedScan = await reviewScan(scan.scan_id, payload)
+      if (!isMountedRef.current) return
+
+      setScan(updatedScan)
+      setCorrections({})
+      setEditingField(null)
+      setIsSubmittingReview(false)
+      setReviewSuccessMsg(
+        `Inspector review submitted successfully! Final verdict recorded as ${targetVerdict}.`
+      )
+      setActiveTab('overview')
+    } catch (err) {
+      if (!isMountedRef.current) return
+      const apiErr = err as ApiErrorDetail
+      setIsSubmittingReview(false)
+      setReviewError(apiErr.message || 'Failed to submit inspector review resolution.')
+    }
+  }
+
   // 1. Initial Loading Skeleton State
   if (isLoading && !scan) {
     return (
@@ -118,7 +218,7 @@ export const InspectionDetailsPage: React.FC = () => {
     )
   }
 
-  // 2. Fetch / Network Error State (Scan Not Found or Server Down)
+  // 2. Fetch / Network Error State
   if (errorMessage && !scan) {
     return (
       <div className="space-y-6 max-w-5xl mx-auto">
@@ -158,7 +258,7 @@ export const InspectionDetailsPage: React.FC = () => {
     )
   }
 
-  // 3. Scan Processing State (Live In-Flight Scan)
+  // 3. Scan Processing State
   const isPending = scan?.status === 'pending' || scan?.status === 'processing'
   if (isPending) {
     return (
@@ -214,7 +314,7 @@ export const InspectionDetailsPage: React.FC = () => {
     )
   }
 
-  // 4. Scan Failed State (Pipeline Failure)
+  // 4. Scan Failed State
   if (scan?.status === 'failed') {
     return (
       <div className="space-y-6 max-w-5xl mx-auto">
@@ -242,7 +342,7 @@ export const InspectionDetailsPage: React.FC = () => {
             </div>
             <h3 className="text-sm font-semibold text-slate-800">Pipeline Failed to Complete Scan</h3>
             <p className="text-xs text-slate-500 mt-2 mb-4 leading-relaxed">
-              The inspection pipeline encountered an unrecoverable failure while analyzing the uploaded image. This can happen if the image is corrupted, lacks identifiable packaging text, or the OCR engine failed.
+              The inspection pipeline encountered an unrecoverable failure while analyzing the uploaded image. This can happen if the image is corrupted, lacks packaging text, or the OCR engine failed.
             </p>
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs w-full text-left font-mono space-y-1 mb-6 text-slate-600">
               <div><span className="font-semibold text-slate-800">Scan ID:</span> {scan.scan_id}</div>
@@ -265,6 +365,7 @@ export const InspectionDetailsPage: React.FC = () => {
 
   // 5. Complete State Data Normalization
   const verdict = scan?.verdict || 'NEEDS_REVIEW'
+  const isNeedsReview = verdict === 'NEEDS_REVIEW' && scan?.status === 'complete'
   const score = scan?.compliance_score !== null && scan?.compliance_score !== undefined ? scan.compliance_score : null
   const declarations = scan?.declarations || []
   const violations = scan?.violations || []
@@ -287,13 +388,15 @@ export const InspectionDetailsPage: React.FC = () => {
       : `/${rawImageUrl.replace(/\\/g, '/')}`
     : null
 
-  // Extract human-friendly product title without fabricating
+  // Extract human-friendly product title
   const genericNameDecl = declarations.find((d) => ['generic_name', 'product_name'].includes(d.field_name))
   const productName =
     genericNameDecl?.normalized_value ||
     genericNameDecl?.raw_value ||
     scan?.product_category ||
     'Packaged Commodity'
+
+  const correctedFieldsCount = Object.keys(corrections).length
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -333,30 +436,61 @@ export const InspectionDetailsPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {isNeedsReview && activeTab !== 'review' && (
+            <Button
+              onClick={() => setActiveTab('review')}
+              icon={<UserCheck className="w-4 h-4" />}
+            >
+              Start Inspector Review
+            </Button>
+          )}
           <Link to="/new-inspection">
-            <Button size="sm">New Inspection</Button>
+            <Button variant="outline" size="sm">New Inspection</Button>
           </Link>
         </div>
       </div>
 
-      {/* 2. Prominent NEEDS_REVIEW Notice Banner */}
-      {verdict === 'NEEDS_REVIEW' && (
-        <div className="p-4 bg-amber-50 border border-amber-300 rounded-lg flex items-start gap-3 text-xs text-amber-900 shadow-2xs">
-          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <div className="font-bold text-sm text-amber-950">
-              Human Inspector Verification Required
-            </div>
-            <p className="leading-relaxed text-amber-800">
-              This package inspection returned a verdict of <code className="font-bold font-mono">NEEDS_REVIEW</code>.
-              One or more mandatory declarations returned an <span className="font-semibold underline">uncertain</span> status,
-              low OCR confidence, or borderline measurement validation. A certified Legal Metrology inspector must review and confirm the extracted values.
-            </p>
+      {/* 2. Success Alert after Review */}
+      {reviewSuccessMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-lg flex items-center justify-between text-xs text-emerald-900 animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <span className="font-semibold">{reviewSuccessMsg}</span>
           </div>
+          <button onClick={() => setReviewSuccessMsg(null)} className="text-emerald-700 hover:text-emerald-900">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
-      {/* 3. Top Metrics Summary */}
+      {/* 3. Prominent NEEDS_REVIEW Notice Banner */}
+      {isNeedsReview && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-2xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="font-bold text-sm text-amber-950">
+                Human Inspector Verification Required
+              </div>
+              <p className="leading-relaxed text-amber-800">
+                One or more mandatory declarations returned an <span className="font-semibold underline">uncertain</span> status or low OCR confidence. A certified Legal Metrology inspector must verify the packaging label and submit a final resolution.
+              </p>
+            </div>
+          </div>
+          {activeTab !== 'review' && (
+            <Button
+              size="sm"
+              onClick={() => setActiveTab('review')}
+              className="self-start sm:self-auto flex-shrink-0"
+              icon={<UserCheck className="w-4 h-4" />}
+            >
+              Review Scan
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* 4. Top Metrics Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Compliance Score */}
         <Card className="border-slate-200">
@@ -448,9 +582,9 @@ export const InspectionDetailsPage: React.FC = () => {
         </Card>
       </div>
 
-      {/* 4. Tab Navigation */}
+      {/* 5. Tab Navigation */}
       <div className="border-b border-slate-200">
-        <nav className="flex gap-6 -mb-px">
+        <nav className="flex gap-6 -mb-px flex-wrap">
           <button
             onClick={() => setActiveTab('overview')}
             className={`py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
@@ -505,10 +639,29 @@ export const InspectionDetailsPage: React.FC = () => {
             <ImageIcon className="w-4 h-4" />
             <span>Full Evidence View</span>
           </button>
+
+          {isNeedsReview && (
+            <button
+              onClick={() => setActiveTab('review')}
+              className={`py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+                activeTab === 'review'
+                  ? 'border-amber-600 text-amber-700 font-bold'
+                  : 'border-transparent text-amber-600 hover:text-amber-800'
+              }`}
+            >
+              <UserCheck className="w-4 h-4" />
+              <span>Inspector Review</span>
+              {correctedFieldsCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-900 font-bold">
+                  {correctedFieldsCount} edited
+                </span>
+              )}
+            </button>
+          )}
         </nav>
       </div>
 
-      {/* 5. Tab Content Area */}
+      {/* 6. Tab Content Area */}
 
       {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
@@ -561,9 +714,12 @@ export const InspectionDetailsPage: React.FC = () => {
                   <span className="text-xs font-mono text-slate-700">LMR Rule 6(1) Declarations</span>
                 </div>
                 {scan?.reviewer_notes && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs space-y-1">
-                    <span className="font-semibold text-amber-900">Inspector Reviewer Notes:</span>
-                    <p className="text-amber-800">{scan.reviewer_notes}</p>
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs space-y-1">
+                    <span className="font-semibold text-blue-950 flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-brand-blue" />
+                      Inspector Reviewer Notes:
+                    </span>
+                    <p className="text-blue-900 leading-relaxed font-normal">{scan.reviewer_notes}</p>
                   </div>
                 )}
               </div>
@@ -721,7 +877,11 @@ export const InspectionDetailsPage: React.FC = () => {
                               : '—'}
                           </td>
                           <td className="py-3 px-3 text-slate-500 capitalize">
-                            {decl.source || 'gemini'}
+                            {decl.source === 'manual' ? (
+                              <span className="text-blue-700 font-semibold">manual (Inspector)</span>
+                            ) : (
+                              decl.source || 'gemini'
+                            )}
                           </td>
                           <td className="py-3 px-3 font-mono text-[11px] text-slate-500">
                             {decl.bounding_box ? (
@@ -801,7 +961,6 @@ export const InspectionDetailsPage: React.FC = () => {
           ) : (
             <div className="space-y-4">
               {violations.map((viol, idx) => {
-                // Find matching declaration for context linkage
                 const linkedDecl = viol.field_name
                   ? declarations.find((d) => d.field_name === viol.field_name)
                   : null
@@ -857,7 +1016,6 @@ export const InspectionDetailsPage: React.FC = () => {
                       {viol.description}
                     </p>
 
-                    {/* Linked Declaration Context Evidence Box */}
                     {linkedDecl && (
                       <div className="p-3 bg-white/90 rounded border border-slate-200 text-xs space-y-1">
                         <div className="flex items-center justify-between text-slate-700">
@@ -892,11 +1050,6 @@ export const InspectionDetailsPage: React.FC = () => {
                                 : '—'}
                             </span>
                           </div>
-                          {linkedDecl.bounding_box && (
-                            <div className="sm:col-span-2 text-slate-500 font-mono">
-                              Bounding Box: [x={linkedDecl.bounding_box.x}, y={linkedDecl.bounding_box.y}, w={linkedDecl.bounding_box.width}, h={linkedDecl.bounding_box.height}]
-                            </div>
-                          )}
                         </div>
                       </div>
                     )}
@@ -949,6 +1102,234 @@ export const InspectionDetailsPage: React.FC = () => {
                 </p>
               </div>
             )}
+          </Card>
+        </div>
+      )}
+
+      {/* TAB 5: HUMAN INSPECTOR REVIEW WORKFLOW (NEEDS_REVIEW ONLY) */}
+      {activeTab === 'review' && isNeedsReview && (
+        <div className="space-y-6">
+          {/* Review Instructions Card */}
+          <Card
+            title="Human Inspector Review & Resolution Workstation"
+            subtitle="Verify uncertain packaging declarations and record final statutory determination"
+          >
+            <div className="space-y-6">
+              {reviewError && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3 text-xs text-red-800">
+                  <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold">Review Error:</span> {reviewError}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 1: Declarations Verification & Overrides */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    1. Audit & Correct Packaging Declarations
+                  </h3>
+                  <span className="text-xs text-slate-500">
+                    Click <strong>Edit</strong> on any declaration to apply a manual correction.
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {declarations.map((decl) => {
+                    const isEditing = editingField === decl.field_name
+                    const correction = corrections[decl.field_name]
+
+                    return (
+                      <div
+                        key={decl.field_name}
+                        className={`p-3.5 rounded-lg border text-xs transition-all ${
+                          correction
+                            ? 'bg-blue-50/70 border-blue-300'
+                            : decl.status === 'uncertain'
+                            ? 'bg-amber-50/60 border-amber-200'
+                            : 'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-slate-800">
+                              {decl.field_name}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${
+                                (correction?.status || decl.status) === 'detected'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : (correction?.status || decl.status) === 'uncertain'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}
+                            >
+                              {correction?.status || decl.status}
+                            </span>
+                            {correction && (
+                              <span className="text-[10px] bg-brand-blue text-white px-2 py-0.5 rounded font-semibold">
+                                Inspector Corrected
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {!isEditing && (
+                              <button
+                                onClick={() => startEditingDeclaration(decl)}
+                                className="text-xs text-brand-blue hover:text-brand-blueHover font-medium inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded border border-slate-200 shadow-2xs"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>{correction ? 'Modify Override' : 'Correct Value'}</span>
+                              </button>
+                            )}
+                            {correction && !isEditing && (
+                              <button
+                                onClick={() => removeCorrection(decl.field_name)}
+                                className="text-xs text-red-600 hover:text-red-700 font-medium inline-flex items-center gap-1 bg-white px-2 py-1 rounded border border-red-200 shadow-2xs"
+                              >
+                                <Undo2 className="w-3.5 h-3.5" />
+                                <span>Revert</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Value Comparison */}
+                        {!isEditing ? (
+                          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1 border-t border-slate-200/60">
+                            <div>
+                              <span className="text-slate-400">Original AI Value: </span>
+                              <span className="text-slate-800 font-medium">
+                                {decl.raw_value || 'None detected'}
+                              </span>
+                            </div>
+                            {correction && (
+                              <div>
+                                <span className="text-blue-600 font-semibold">Inspector Value: </span>
+                                <span className="text-blue-950 font-bold">
+                                  {correction.raw_value || correction.normalized_value || 'Marked as valid'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          /* Inline Correction Editor Form */
+                          <div className="mt-3 p-3 bg-white rounded-lg border border-brand-blue/30 space-y-3 animate-in fade-in">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Corrected Raw Text
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editRawValue}
+                                  onChange={(e) => setEditRawValue(e.target.value)}
+                                  placeholder="e.g. ₹150.00 (incl. of all taxes)"
+                                  className="w-full text-xs p-2 rounded border border-slate-300 focus:border-brand-blue focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Normalized Value
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editNormalizedValue}
+                                  onChange={(e) => setEditNormalizedValue(e.target.value)}
+                                  placeholder="e.g. 150.00"
+                                  className="w-full text-xs p-2 rounded border border-slate-300 focus:border-brand-blue focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Verification Status
+                                </label>
+                                <select
+                                  value={editStatus}
+                                  onChange={(e) => setEditStatus(e.target.value as DeclarationStatus)}
+                                  className="w-full text-xs p-2 rounded border border-slate-300 bg-white focus:border-brand-blue focus:outline-none"
+                                >
+                                  <option value="detected">Detected (Valid)</option>
+                                  <option value="missing">Missing (Non-Compliant)</option>
+                                  <option value="uncertain">Uncertain</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditingField(null)}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => saveDeclarationCorrection(decl.field_name)}
+                                icon={<Check className="w-3.5 h-3.5" />}
+                              >
+                                Apply Correction
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Step 2: Reviewer Audit Observations Notes */}
+              <div className="space-y-2 pt-3 border-t border-slate-200">
+                <label htmlFor="reviewer-notes" className="block text-sm font-bold text-slate-900">
+                  2. Inspector Reviewer Observations & Statutory Justification <span className="text-red-600">*</span>
+                </label>
+                <textarea
+                  id="reviewer-notes"
+                  rows={3}
+                  value={reviewerNotes}
+                  onChange={(e) => setReviewerNotes(e.target.value)}
+                  placeholder="Record your legal metrology audit findings (e.g., Mandatory declarations verified against Rule 6(1); Principal Display Panel placement confirmed compliant under Rule 7)."
+                  className="w-full text-xs p-3 rounded-lg border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue leading-relaxed"
+                />
+              </div>
+
+              {/* Step 3: Final Resolution Action Bar */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-800">
+                    3. Submit Final Compliance Resolution
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Submitting will finalize this inspection record and regenerate the official audit report.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSubmitReview('FAIL')}
+                    disabled={isSubmittingReview || !reviewerNotes.trim()}
+                    className="border-red-300 text-red-700 hover:bg-red-50 flex-1 sm:flex-initial"
+                    icon={isSubmittingReview ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5 text-red-600" />}
+                  >
+                    Resolve as FAIL
+                  </Button>
+
+                  <Button
+                    onClick={() => handleSubmitReview('PASS')}
+                    disabled={isSubmittingReview || !reviewerNotes.trim()}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white flex-1 sm:flex-initial"
+                    icon={isSubmittingReview ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  >
+                    Resolve as PASS
+                  </Button>
+                </div>
+              </div>
+            </div>
           </Card>
         </div>
       )}

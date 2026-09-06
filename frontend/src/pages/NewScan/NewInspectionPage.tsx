@@ -54,7 +54,13 @@ export const NewInspectionPage: React.FC = () => {
 
   const handleAnalyze = () => {
     if (!isFormValid) return
-    navigate('/processing/demo-1')
+    navigate('/processing/demo-1', {
+      state: {
+        imagePreviewUrl,
+        productName: productName.trim() || 'Demo Package',
+        category: category.trim() || 'Food Grains',
+      },
+    })
   }
 
   return (

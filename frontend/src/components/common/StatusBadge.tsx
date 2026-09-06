@@ -42,7 +42,21 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       dot: 'bg-verdict-review',
       defaultLabel: 'NEEDS REVIEW',
     },
+    NEEDS_REVIEW: {
+      bg: 'bg-verdict-reviewBg',
+      text: 'text-amber-700',
+      border: 'border-verdict-reviewBorder',
+      dot: 'bg-verdict-review',
+      defaultLabel: 'NEEDS REVIEW',
+    },
     PENDING: {
+      bg: 'bg-blue-50',
+      text: 'text-blue-700',
+      border: 'border-blue-200',
+      dot: 'bg-blue-500 animate-pulse',
+      defaultLabel: 'PENDING',
+    },
+    PROCESSING: {
       bg: 'bg-blue-50',
       text: 'text-blue-700',
       border: 'border-blue-200',

@@ -4,6 +4,12 @@ PackSure AI — Schemas Package
 Exports all Pydantic v2 data models and canonical enums for the Legal Metrology compliance system.
 """
 
+from app.schemas.analytics import (
+    AnalyticsResponse,
+    CategoryStats,
+    DailyTrendItem,
+    TopViolationItem,
+)
 from app.schemas.compliance import (
     ComplianceResult,
     ComplianceVerdict,
@@ -80,4 +86,9 @@ __all__ = [
     "ScanHistoryItem",
     "ScanHistoryResponse",
     "ScanReviewRequest",
+    # Analytics
+    "DailyTrendItem",
+    "TopViolationItem",
+    "CategoryStats",
+    "AnalyticsResponse",
 ]

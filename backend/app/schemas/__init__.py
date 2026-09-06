@@ -18,6 +18,11 @@ from app.schemas.declaration import (
     ExtractedDeclaration,
     MandatoryFieldType,
 )
+from app.schemas.image import (
+    ImageQualityReport,
+    QualityMetrics,
+    QualityStatus,
+)
 from app.schemas.ocr import (
     BoundingBox,
     OCRTextBlock,
@@ -41,6 +46,10 @@ from app.schemas.violation import (
 )
 
 __all__ = [
+    # Image Quality
+    "QualityStatus",
+    "QualityMetrics",
+    "ImageQualityReport",
     # OCR
     "BoundingBox",
     "OCRTextBlock",

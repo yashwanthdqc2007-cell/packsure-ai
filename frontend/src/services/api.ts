@@ -57,4 +57,34 @@ api.interceptors.response.use(
   }
 )
 
+/**
+ * Resolves a storage or artifact path returned by the backend into a fully qualified or proxy-ready URL.
+ *
+ * - Leaves absolute URLs (http:// or https://) untouched.
+ * - Converts relative paths (e.g., "storage/scans/xyz/evidence.jpg" or "/storage/...") to target backend origin.
+ * - Safely normalizes Windows backslashes and handles leading/trailing slashes.
+ * - Uses VITE_API_BASE_URL if configured; otherwise defaults to the backend origin.
+ */
+export const resolveArtifactUrl = (path?: string | null): string | null => {
+  if (!path || typeof path !== 'string' || !path.trim()) {
+    return null
+  }
+
+  const normalized = path.trim().replace(/\\/g, '/')
+  if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+    return normalized
+  }
+
+  const cleanRelative = normalized.startsWith('/') ? normalized.slice(1) : normalized
+  const rawEnv = (import.meta.env.VITE_API_BASE_URL || '').trim()
+
+  let backendOrigin = 'http://localhost:8000'
+  if (rawEnv) {
+    // Strip any trailing /api or /api/v1 prefix to get the root server origin
+    backendOrigin = rawEnv.replace(/\/api(?:\/v1)?\/?$/, '').replace(/\/+$/, '')
+  }
+
+  return `${backendOrigin}/${cleanRelative}`
+}
+
 export default api

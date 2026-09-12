@@ -29,7 +29,7 @@ import Card from '../../components/common/Card'
 import StatusBadge from '../../components/common/StatusBadge'
 import Button from '../../components/common/Button'
 import { getScan, reviewScan } from '../../services/scanService'
-import type { ApiErrorDetail } from '../../services/api'
+import { resolveArtifactUrl, type ApiErrorDetail } from '../../services/api'
 import type {
   CorrectedDeclaration,
   DeclarationStatus,
@@ -382,11 +382,7 @@ export const InspectionDetailsPage: React.FC = () => {
 
   // Resolve visual evidence image URL
   const rawImageUrl = scan?.evidence_image_url || scan?.image_url
-  const evidenceUrl = rawImageUrl
-    ? rawImageUrl.startsWith('http')
-      ? rawImageUrl
-      : `/${rawImageUrl.replace(/\\/g, '/')}`
-    : null
+  const evidenceUrl = resolveArtifactUrl(rawImageUrl)
 
   // Extract human-friendly product title
   const genericNameDecl = declarations.find((d) => ['generic_name', 'product_name'].includes(d.field_name))

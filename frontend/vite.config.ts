@@ -13,6 +13,10 @@ export default defineConfig(({ mode }) => {
           target: env['VITE_API_BASE_URL'] || 'http://localhost:8000',
           changeOrigin: true,
         },
+        '/storage': {
+          target: env['VITE_API_BASE_URL'] || 'http://localhost:8000',
+          changeOrigin: true,
+        },
       },
     },
   }

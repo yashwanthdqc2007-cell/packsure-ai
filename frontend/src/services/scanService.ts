@@ -31,7 +31,18 @@ import type {
  */
 export async function createScan(params: ScanCreateParams): Promise<ScanInitResponse> {
   const formData = new FormData()
-  formData.append('image', params.image)
+
+  if (params.images && params.images.length > 0) {
+    params.images.forEach((img) => {
+      formData.append('images', img)
+    })
+  } else if (params.image) {
+    formData.append('image', params.image)
+  }
+
+  if (params.is_complete_scan !== undefined) {
+    formData.append('is_complete_scan', String(params.is_complete_scan))
+  }
 
   if (params.product_category && params.product_category.trim() !== '') {
     formData.append('product_category', params.product_category.trim())

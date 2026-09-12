@@ -15,6 +15,7 @@ import {
   FileCheck,
   FileText,
   Image as ImageIcon,
+  Layers,
   Loader2,
   RefreshCw,
   Scale,
@@ -53,6 +54,7 @@ export const InspectionDetailsPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'declarations' | 'violations' | 'evidence' | 'review'>('overview')
   const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
+  const [selectedViewIndex, setSelectedViewIndex] = useState<number>(0)
   const [imageError, setImageError] = useState<boolean>(false)
 
   // Human Review Workflow States
@@ -389,9 +391,20 @@ export const InspectionDetailsPage: React.FC = () => {
   const majorViolations = statutoryViolations.filter((v) => v.severity === 'major')
   const minorViolations = statutoryViolations.filter((v) => v.severity === 'minor')
 
-  // Resolve visual evidence image URL
-  const rawImageUrl = scan?.evidence_image_url || scan?.image_url
-  const evidenceUrl = resolveArtifactUrl(rawImageUrl)
+  // Resolve visual evidence image URLs (support multi-view)
+  const evidenceImageUrls: string[] =
+    scan?.evidence_image_urls && scan.evidence_image_urls.length > 0
+      ? scan.evidence_image_urls
+      : scan?.evidence_image_url
+      ? [scan.evidence_image_url]
+      : scan?.image_urls && scan.image_urls.length > 0
+      ? scan.image_urls
+      : scan?.image_url
+      ? [scan.image_url]
+      : []
+
+  const activeEvidenceRaw = evidenceImageUrls[selectedViewIndex] || scan?.evidence_image_url || scan?.image_url
+  const evidenceUrl = resolveArtifactUrl(activeEvidenceRaw)
 
   // Extract human-friendly product title
   const genericNameDecl = declarations.find((d) => ['generic_name', 'product_name'].includes(d.field_name))
@@ -419,6 +432,18 @@ export const InspectionDetailsPage: React.FC = () => {
                 {productName}
               </h1>
               <StatusBadge status={verdict} />
+              {evidenceImageUrls.length > 1 && (
+                <span className="text-xs font-semibold text-brand-blue bg-blue-50 px-2 py-0.5 rounded border border-blue-200 flex items-center gap-1">
+                  <Layers className="w-3 h-3 text-brand-blue" />
+                  {evidenceImageUrls.length} Views Captured
+                </span>
+              )}
+              {scan?.is_complete_scan && (
+                <span className="text-xs font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                  <Check className="w-3 h-3 text-emerald-600" />
+                  Complete Scan
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3 text-xs text-slate-500 mt-1 flex-wrap">
               <span>Scan ID: <code className="font-mono text-slate-700">{scan?.scan_id}</code></span>
@@ -700,17 +725,40 @@ export const InspectionDetailsPage: React.FC = () => {
             title="Visual Evidence Overlay"
             subtitle="Color-coded annotations from Legal Metrology rules engine"
           >
+            {/* Multi-View Switcher */}
+            {evidenceImageUrls.length > 1 && (
+              <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1">
+                <span className="text-xs font-semibold text-slate-500 mr-1 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-brand-blue" /> View:
+                </span>
+                {evidenceImageUrls.map((_, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setSelectedViewIndex(idx)}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
+                      selectedViewIndex === idx
+                        ? 'bg-brand-blue text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    View {idx + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {evidenceUrl && !imageError ? (
               <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-900 flex flex-col items-center justify-center min-h-[320px] relative group">
                 <img
                   src={evidenceUrl}
-                  alt="Inspection Evidence"
+                  alt={`Inspection Evidence View ${selectedViewIndex + 1}`}
                   onError={() => setImageError(true)}
                   className="max-h-[460px] w-auto object-contain transition-all"
                 />
                 <div className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[11px] px-2.5 py-1 rounded backdrop-blur-xs flex items-center gap-1.5">
                   <Eye className="w-3.5 h-3.5" />
-                  <span>Rule Engine Overlay</span>
+                  <span>Rule Engine Overlay {evidenceImageUrls.length > 1 ? `(View ${selectedViewIndex + 1})` : ''}</span>
                 </div>
               </div>
             ) : (
@@ -895,9 +943,17 @@ export const InspectionDetailsPage: React.FC = () => {
                       return (
                         <tr
                           key={decl.id || idx}
-                          onClick={() =>
-                            setSelectedFieldName(isSelected ? null : decl.field_name)
-                          }
+                          onClick={() => {
+                            const nextField = isSelected ? null : decl.field_name
+                            setSelectedFieldName(nextField)
+                            if (
+                              decl.image_index !== null &&
+                              decl.image_index !== undefined &&
+                              decl.image_index < evidenceImageUrls.length
+                            ) {
+                              setSelectedViewIndex(decl.image_index)
+                            }
+                          }}
                           className={`cursor-pointer transition-colors ${
                             isSelected
                               ? 'bg-blue-50/80 font-medium'
@@ -905,12 +961,17 @@ export const InspectionDetailsPage: React.FC = () => {
                           }`}
                         >
                           <td className="py-3 px-3">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-semibold text-slate-800 font-mono">
                                 {decl.field_name}
                               </span>
                               {hasLinkedViolations && (
                                 <span className="w-2 h-2 rounded-full bg-red-500" title="Has linked violation" />
+                              )}
+                              {decl.image_index !== null && decl.image_index !== undefined && evidenceImageUrls.length > 1 && (
+                                <span className="text-[10px] font-mono bg-blue-50 text-blue-700 px-1 py-0.5 rounded border border-blue-200">
+                                  View {decl.image_index + 1}
+                                </span>
                               )}
                             </div>
                           </td>
@@ -1187,18 +1248,41 @@ export const InspectionDetailsPage: React.FC = () => {
             title="Inspection Visual Artifact Viewer"
             subtitle="Full-resolution bounding-box overlay and spatial coordinates"
           >
+            {/* Multi-View Switcher */}
+            {evidenceImageUrls.length > 1 && (
+              <div className="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1">
+                <span className="text-xs font-semibold text-slate-500 mr-1 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-brand-blue" /> Package View:
+                </span>
+                {evidenceImageUrls.map((_, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setSelectedViewIndex(idx)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                      selectedViewIndex === idx
+                        ? 'bg-brand-blue text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    View {idx + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {evidenceUrl && !imageError ? (
               <div className="space-y-4">
                 <div className="rounded-lg overflow-hidden border border-slate-300 bg-slate-950 flex items-center justify-center p-2">
                   <img
                     src={evidenceUrl}
-                    alt="Full Visual Evidence"
+                    alt={`Full Visual Evidence View ${selectedViewIndex + 1}`}
                     onError={() => setImageError(true)}
                     className="max-h-[600px] w-auto object-contain"
                   />
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500">
-                  <span>Artifact URL: <code className="font-mono text-slate-700">{scan?.evidence_image_url || scan?.image_url}</code></span>
+                  <span>Artifact URL: <code className="font-mono text-slate-700">{activeEvidenceRaw}</code></span>
                   <a
                     href={evidenceUrl}
                     target="_blank"

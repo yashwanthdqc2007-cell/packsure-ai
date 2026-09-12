@@ -492,5 +492,261 @@ class TestComplianceOrchestrator(unittest.TestCase):
             process_compliance_inspection(image=np.zeros((0, 0), dtype=np.uint8))
 
 
+class TestSyntheticUSPComplianceScenario(unittest.TestCase):
+    """End-to-end scenario tests for Rule 6(11) Unit Sale Price using synthetic image fixtures."""
+
+    @staticmethod
+    def _create_synthetic_packaged_product_fixture(
+        mrp_text: str = "MRP: Rs. 300.00 (inclusive of all taxes)",
+        net_qty_text: str = "Net Quantity: 500 g",
+        usp_text: str = "Unit Sale Price: Rs. 500.00 / kg",
+    ) -> np.ndarray:
+        """Render a clean, high-resolution 1200x1200 synthetic packaged product image."""
+        try:
+            import cv2
+            from PIL import Image, ImageDraw, ImageFont
+
+            try:
+                font = ImageFont.truetype("arial.ttf", 32)
+                title_font = ImageFont.truetype("arial.ttf", 40)
+            except Exception:
+                font = ImageFont.load_default()
+                title_font = font
+
+            img = Image.new("RGB", (1200, 1200), color=(210, 210, 210))
+            draw = ImageDraw.Draw(img)
+
+            # High-contrast packaging box and header
+            draw.rectangle([40, 40, 1160, 1160], fill=(230, 230, 235), outline=(30, 30, 30), width=6)
+            draw.rectangle([60, 60, 1140, 180], fill=(25, 45, 90), outline=(15, 30, 60), width=3)
+            draw.rectangle([60, 200, 1140, 1140], fill=(240, 240, 240), outline=(120, 120, 120), width=2)
+
+            draw.text((100, 100), "PACKSURE PREMIUM ALMONDS", fill=(255, 255, 255), font=title_font)
+            draw.text((100, 250), "Generic Name: Almond Kernels", fill=(0, 0, 0), font=font)
+            draw.text((100, 330), net_qty_text, fill=(0, 0, 0), font=font)
+            draw.text((100, 410), mrp_text, fill=(0, 0, 0), font=font)
+            draw.text((100, 490), usp_text, fill=(0, 0, 0), font=font)
+            draw.text((100, 570), "Mfg Date: 01/2026", fill=(0, 0, 0), font=font)
+            draw.text((100, 650), "Best Before: 12/2026", fill=(0, 0, 0), font=font)
+            draw.text((100, 730), "Batch No: ALM-2026-09", fill=(0, 0, 0), font=font)
+            draw.text((100, 810), "Manufactured by: PackSure Foods Ltd, Plot 42, Sector 18, Gurugram 122015", fill=(0, 0, 0), font=font)
+            draw.text((100, 890), "Consumer Care: care@packsure.ai, Toll Free: 1800-111-2222", fill=(0, 0, 0), font=font)
+
+            # Barcode pattern for realistic packaging texture and sharpness
+            for x in range(100, 1100, 12):
+                draw.line([(x, 970), (x, 1090)], fill=(0, 0, 0), width=3 if x % 24 == 0 else 2)
+
+            np_img = np.array(img)
+            return cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
+        except Exception:
+            # Fallback numpy array if PIL/cv2 not available
+            return np.full((1200, 1200, 3), 200, dtype=np.uint8)
+
+    def test_synthetic_fixture_passes_quality_gate(self):
+        """The 1200x1200 synthetic fixture must satisfy all production image quality criteria."""
+        from app.services.image_service import check_image_quality
+
+        fixture_img = self._create_synthetic_packaged_product_fixture()
+        quality_report = check_image_quality(fixture_img)
+
+        self.assertTrue(quality_report.is_valid)
+        self.assertEqual(quality_report.status, QualityStatus.acceptable)
+        self.assertGreaterEqual(quality_report.metrics.width, 600)
+        self.assertGreaterEqual(quality_report.metrics.height, 600)
+        self.assertFalse(quality_report.metrics.is_blurry)
+        self.assertFalse(quality_report.metrics.is_too_dark)
+        self.assertFalse(quality_report.metrics.is_too_bright)
+        self.assertFalse(quality_report.metrics.is_low_contrast)
+
+    @patch("app.services.compliance_service.extract_declarations")
+    def test_synthetic_usp_inconsistency_fails_deterministically(self, mock_extract):
+        """Synthetic fixture with MRP=300, Qty=500g, Declared USP=500/kg fails deterministic USP check.
+
+        Statutory calculation:
+        - Net Quantity = 500 g = 0.5 kg
+        - MRP = Rs. 300.00
+        - Expected Statutory Rate = 300 / 0.5 = Rs. 600.00 / kg (or Rs. 0.60 / g)
+        - Declared USP = Rs. 500.00 / kg (mathematically incorrect & statutory unit mismatch for < 1kg).
+        - Rule 6(11) must catch this deterministically and yield a FAIL verdict.
+        """
+        fixture_img = self._create_synthetic_packaged_product_fixture(
+            mrp_text="MRP: Rs. 300.00 (inclusive of all taxes)",
+            net_qty_text="Net Quantity: 500 g",
+            usp_text="Unit Sale Price: Rs. 500.00 / kg",
+        )
+
+        mock_extract.return_value = [
+            ExtractedDeclaration(
+                field_name="generic_name",
+                status=DeclarationStatus.detected,
+                raw_value="Generic Name: Almond Kernels",
+                normalized_value="Almond Kernels",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="net_quantity",
+                status=DeclarationStatus.detected,
+                raw_value="Net Quantity: 500 g",
+                normalized_value="500 g",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="mrp",
+                status=DeclarationStatus.detected,
+                raw_value="MRP: Rs. 300.00 (inclusive of all taxes)",
+                normalized_value="300.00",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="unit_sale_price",
+                status=DeclarationStatus.detected,
+                raw_value="Unit Sale Price: Rs. 500.00 / kg",
+                normalized_value="500.00 / kg",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="manufacture_date",
+                status=DeclarationStatus.detected,
+                raw_value="Mfg Date: 01/2026",
+                normalized_value="2026-01-01",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="batch_number",
+                status=DeclarationStatus.detected,
+                raw_value="Batch No: ALM-2026-09",
+                normalized_value="ALM-2026-09",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="manufacturer_name_and_address",
+                status=DeclarationStatus.detected,
+                raw_value="Manufactured by: PackSure Foods Ltd, Plot 42, Sector 18, Gurugram 122015",
+                normalized_value="PackSure Foods Ltd, Plot 42, Sector 18, Gurugram 122015",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="consumer_care",
+                status=DeclarationStatus.detected,
+                raw_value="Consumer Care: care@packsure.ai, Toll Free: 1800-111-2222",
+                normalized_value="care@packsure.ai",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+        ]
+
+        result = process_compliance_inspection(
+            image=fixture_img,
+            product_category="Food Grains",
+            is_complete_scan=False,
+        )
+
+        self.assertIsInstance(result, ComplianceResult)
+        self.assertEqual(result.verdict, ComplianceVerdict.FAIL)
+        self.assertLess(result.compliance_score, 100.0)
+
+        usp_violations = [v for v in result.violations if v.field_name == "unit_sale_price"]
+        self.assertEqual(len(usp_violations), 1)
+        self.assertEqual(usp_violations[0].rule_code, "Rule-6(11)")
+        self.assertIn("Rule 6(11)", usp_violations[0].description)
+
+    @patch("app.services.compliance_service.extract_declarations")
+    def test_synthetic_usp_mathematical_mismatch_fails_deterministically(self, mock_extract):
+        """Synthetic fixture with declared rate Rs. 0.50/g vs calculated rate Rs. 0.60/g fails math check."""
+        fixture_img = self._create_synthetic_packaged_product_fixture(
+            mrp_text="MRP: Rs. 300.00 (inclusive of all taxes)",
+            net_qty_text="Net Quantity: 500 g",
+            usp_text="Unit Sale Price: Rs. 0.50 / g",
+        )
+
+        mock_extract.return_value = [
+            ExtractedDeclaration(
+                field_name="generic_name",
+                status=DeclarationStatus.detected,
+                raw_value="Generic Name: Almond Kernels",
+                normalized_value="Almond Kernels",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="net_quantity",
+                status=DeclarationStatus.detected,
+                raw_value="Net Quantity: 500 g",
+                normalized_value="500 g",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="mrp",
+                status=DeclarationStatus.detected,
+                raw_value="MRP: Rs. 300.00 (inclusive of all taxes)",
+                normalized_value="300.00",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="unit_sale_price",
+                status=DeclarationStatus.detected,
+                raw_value="Unit Sale Price: Rs. 0.50 / g",
+                normalized_value="0.50 / g",
+                confidence=0.98,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="manufacture_date",
+                status=DeclarationStatus.detected,
+                raw_value="Mfg Date: 01/2026",
+                normalized_value="2026-01-01",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="batch_number",
+                status=DeclarationStatus.detected,
+                raw_value="Batch No: ALM-2026-09",
+                normalized_value="ALM-2026-09",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="manufacturer_name_and_address",
+                status=DeclarationStatus.detected,
+                raw_value="Manufactured by: PackSure Foods Ltd, Plot 42, Sector 18, Gurugram 122015",
+                normalized_value="PackSure Foods Ltd, Plot 42, Sector 18, Gurugram 122015",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+            ExtractedDeclaration(
+                field_name="consumer_care",
+                status=DeclarationStatus.detected,
+                raw_value="Consumer Care: care@packsure.ai, Toll Free: 1800-111-2222",
+                normalized_value="care@packsure.ai",
+                confidence=0.95,
+                source=DeclarationSource.hybrid,
+            ),
+        ]
+
+        result = process_compliance_inspection(
+            image=fixture_img,
+            product_category="Food Grains",
+            is_complete_scan=False,
+        )
+
+        self.assertEqual(result.verdict, ComplianceVerdict.FAIL)
+        usp_violations = [v for v in result.violations if v.field_name == "unit_sale_price"]
+        self.assertEqual(len(usp_violations), 1)
+        self.assertEqual(usp_violations[0].rule_code, "Rule-6(11)")
+        self.assertEqual(usp_violations[0].violation_type, ViolationType.misleading)
+        self.assertIn("0.50", usp_violations[0].description)
+        self.assertIn("0.60", usp_violations[0].description)
+
+
 if __name__ == "__main__":
     unittest.main()

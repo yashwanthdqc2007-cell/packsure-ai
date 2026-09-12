@@ -81,11 +81,20 @@ class ScanResponse(BaseModel):
     image_url: Optional[str] = Field(
         default=None, description="Public storage URL of the raw uploaded package image"
     )
+    image_urls: Optional[List[str]] = Field(
+        default=None, description="List of public storage URLs for all uploaded package views in a multi-view inspection"
+    )
     processed_image_url: Optional[str] = Field(
         default=None, description="Public storage URL of the preprocessed image"
     )
     evidence_image_url: Optional[str] = Field(
         default=None, description="Public storage URL of the annotated evidence image with bounding boxes"
+    )
+    evidence_image_urls: Optional[List[str]] = Field(
+        default=None, description="List of public storage URLs for all annotated evidence images in a multi-view inspection"
+    )
+    is_complete_scan: Optional[bool] = Field(
+        default=False, description="Whether this scan was evaluated as a complete multi-view package inspection"
     )
     declarations: List[ExtractedDeclaration] = Field(
         default_factory=list, description="List of extracted mandatory declaration fields"

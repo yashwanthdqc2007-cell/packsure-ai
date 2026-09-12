@@ -19,9 +19,12 @@ Core Architectural Invariants:
   visual bounding box overlays are suppressed on the original image to prevent coordinate drift.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
-from typing import Optional, Tuple
+import os
+import shutil
+from typing import List, Optional, Sequence, Tuple
 import numpy as np
 
 from app.rules.rule_engine import rule_engine
@@ -30,10 +33,12 @@ from app.schemas.compliance import (
     ComplianceVerdict,
     EvidenceMetadata,
 )
+from app.schemas.declaration import ExtractedDeclaration
 from app.schemas.image import ImageQualityReport, QualityStatus
 from app.schemas.violation import Violation, ViolationSeverity, ViolationType
 from app.services.ai_service import extract_declarations
 from app.services.evidence_service import render_evidence_overlay
+from app.services.fusion_service import fuse_declarations
 from app.services.image_service import (
     DESKEW_MAX_ANGLE_LIMIT,
     DESKEW_MIN_ANGLE_TRIGGER,
@@ -48,6 +53,15 @@ from app.services.ocr_service import extract_raw_ocr
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PackageViewPayload:
+    """Container for raw byte payload of a package view in multi-view inspection."""
+
+    file_bytes: bytes
+    filename: str = ""
+    view_label: Optional[str] = None
+
+
 def process_compliance_inspection(
     image: np.ndarray,
     product_category: Optional[str] = None,
@@ -56,7 +70,7 @@ def process_compliance_inspection(
     is_complete_scan: bool = False,
     output_evidence_path: Optional[str] = None,
 ) -> ComplianceResult:
-    """Execute the end-to-end Legal Metrology compliance inspection pipeline on an image array.
+    """Execute the end-to-end Legal Metrology compliance inspection pipeline on a single image array.
 
     Args:
         image: Original BGR NumPy array.
@@ -199,17 +213,12 @@ def process_compliance_inspection(
         )
 
     # 7. Visual Evidence Rendering & Coordinate Safety Verification
-    # Evidence rendering strictly operates on the original unscaled, unrotated BGR image.
-    # If deskew was applied during OCR preprocessing, those bounding box coordinates reside
-    # in the rotated coordinate frame and cannot be safely projected onto the original image
-    # without an inverse affine matrix. To prevent coordinate drift, suppress bounding boxes.
     try:
         if is_deskewed:
             logger.info(
                 f"Deskew rotation ({skew_angle:.2f}°) detected without inverse affine mapping. "
                 "Suppressing visual bounding box overlays on original image to prevent coordinate drift."
             )
-            # Create a safe copy of declarations with bounding_box=None for rendering
             safe_declarations_for_rendering = [
                 decl.model_copy(update={"bounding_box": None}) for decl in compliance_result.declarations
             ]
@@ -230,9 +239,271 @@ def process_compliance_inspection(
         compliance_result.evidence = updated_evidence
     except Exception as rend_err:
         logger.warning(f"Visual evidence rendering encountered a non-fatal error: {rend_err}")
-        # Preserves rule compliance result and verdict unchanged
 
     return compliance_result
+
+
+def process_multi_view_compliance_from_bytes(
+    views: Sequence[PackageViewPayload],
+    product_category: Optional[str] = None,
+    is_imported: Optional[bool] = None,
+    is_perishable: Optional[bool] = None,
+    is_complete_scan: bool = False,
+    output_dir: Optional[str] = None,
+) -> Tuple[List[Optional[ImageQualityReport]], ComplianceResult, List[Optional[np.ndarray]], List[str]]:
+    """Execute end-to-end multi-view Legal Metrology compliance pipeline with evidence fusion.
+
+    Args:
+        views: Sequence of PackageViewPayload objects representing all captured package views.
+        product_category: Optional commodity category.
+        is_imported: Optional import flag.
+        is_perishable: Optional perishability flag.
+        is_complete_scan: Flag indicating whether all packaging panels were captured.
+        output_dir: Optional directory to persist raw & annotated evidence images.
+
+    Returns:
+        Tuple of (quality_reports_list, compliance_result, decoded_images_list, evidence_paths_list).
+    """
+    if not views:
+        empty_res = ComplianceResult(
+            verdict=ComplianceVerdict.NEEDS_REVIEW,
+            compliance_score=0.0,
+            declarations=[],
+            violations=[
+                Violation(
+                    rule_code="IMAGE-INVALID",
+                    violation_type=ViolationType.other,
+                    severity=ViolationSeverity.major,
+                    description="No package view image payloads provided for inspection.",
+                )
+            ],
+            evidence=EvidenceMetadata(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                rule_version=rule_engine.rules_version,
+                total_declarations_checked=0,
+                total_violations_found=1,
+            ),
+        )
+        return [], empty_res, [], []
+
+    quality_reports: List[Optional[ImageQualityReport]] = []
+    decoded_images: List[Optional[np.ndarray]] = []
+    all_views_declarations: List[List[ExtractedDeclaration]] = []
+    is_deskewed_flags: List[bool] = []
+
+    # 1. Independent per-view processing
+    for view_idx, view in enumerate(views):
+        fname = view.filename or f"view_{view_idx}.jpg"
+        is_valid, err_msg, decoded_img = validate_image_file(view.file_bytes, filename=fname)
+        if not is_valid or decoded_img is None:
+            err_desc = err_msg or f"Failed to validate or decode image bytes for view {view_idx} ({fname})."
+            fail_res = ComplianceResult(
+                verdict=ComplianceVerdict.NEEDS_REVIEW,
+                compliance_score=0.0,
+                declarations=[],
+                violations=[
+                    Violation(
+                        rule_code="IMAGE-INVALID",
+                        violation_type=ViolationType.other,
+                        severity=ViolationSeverity.major,
+                        description=err_desc,
+                    )
+                ],
+                evidence=EvidenceMetadata(
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    rule_version=rule_engine.rules_version,
+                    total_declarations_checked=0,
+                    total_violations_found=1,
+                ),
+            )
+            return quality_reports, fail_res, decoded_images, []
+
+        q_report = check_image_quality(decoded_img)
+        quality_reports.append(q_report)
+        decoded_images.append(decoded_img)
+
+        if q_report.status == QualityStatus.rejected or not q_report.is_valid:
+            recapture_info = q_report.recapture_reason or "Image quality rejected due to blur, lighting, or resolution."
+            fail_res = ComplianceResult(
+                verdict=ComplianceVerdict.NEEDS_REVIEW,
+                compliance_score=0.0,
+                declarations=[],
+                violations=[
+                    Violation(
+                        rule_code="QUALITY-REJECT",
+                        violation_type=ViolationType.illegible,
+                        severity=ViolationSeverity.major,
+                        description=f"View {view_idx} ({fname}) quality insufficient for automated legal inspection: {recapture_info}",
+                    )
+                ],
+                evidence=EvidenceMetadata(
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    rule_version=rule_engine.rules_version,
+                    total_declarations_checked=0,
+                    total_violations_found=1,
+                ),
+            )
+            return quality_reports, fail_res, decoded_images, []
+
+        # Preprocessing & Coordinate Tracking
+        enhanced_vision, ocr_binarized = preprocess_for_pipeline(decoded_img)
+        gray_img = _to_grayscale(decoded_img).astype(np.uint8)
+        skew_angle = _detect_skew_angle(gray_img)
+        is_deskewed = bool(DESKEW_MIN_ANGLE_TRIGGER < abs(skew_angle) <= DESKEW_MAX_ANGLE_LIMIT)
+        is_deskewed_flags.append(is_deskewed)
+
+        # OCR
+        try:
+            ocr_result = extract_raw_ocr(ocr_binarized)
+        except Exception as ocr_err:
+            logger.error(f"OCR extraction failed on view {view_idx}: {ocr_err}")
+            fail_res = ComplianceResult(
+                verdict=ComplianceVerdict.NEEDS_REVIEW,
+                compliance_score=0.0,
+                declarations=[],
+                violations=[
+                    Violation(
+                        rule_code="OCR-FAILURE",
+                        violation_type=ViolationType.illegible,
+                        severity=ViolationSeverity.major,
+                        description=f"Optical character recognition failed on view {view_idx}: {ocr_err}",
+                    )
+                ],
+                evidence=EvidenceMetadata(
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    rule_version=rule_engine.rules_version,
+                    total_declarations_checked=0,
+                    total_violations_found=1,
+                ),
+            )
+            return quality_reports, fail_res, decoded_images, []
+
+        # AI Extraction
+        try:
+            view_decls = extract_declarations(
+                ocr_result=ocr_result,
+                image=enhanced_vision,
+                product_category=product_category,
+            )
+        except Exception as ai_err:
+            logger.error(f"AI declaration extraction failed on view {view_idx}: {ai_err}")
+            fail_res = ComplianceResult(
+                verdict=ComplianceVerdict.NEEDS_REVIEW,
+                compliance_score=0.0,
+                declarations=[],
+                violations=[
+                    Violation(
+                        rule_code="AI-EXTRACTION-FAILURE",
+                        violation_type=ViolationType.other,
+                        severity=ViolationSeverity.major,
+                        description=f"AI structured declaration extraction failed on view {view_idx}: {ai_err}",
+                    )
+                ],
+                evidence=EvidenceMetadata(
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    rule_version=rule_engine.rules_version,
+                    total_declarations_checked=0,
+                    total_violations_found=1,
+                ),
+            )
+            return quality_reports, fail_res, decoded_images, []
+
+        # Attach Provenance to view declarations
+        tagged_view_decls = [
+            decl.model_copy(update={"image_index": view_idx, "image_name": fname})
+            for decl in view_decls
+        ]
+        all_views_declarations.append(tagged_view_decls)
+
+    # 2. Evidence Fusion across all views
+    fused_declarations, conflict_violations = fuse_declarations(all_views_declarations)
+
+    # 3. Deterministic Legal Metrology Rule Evaluation on Fused Declarations
+    try:
+        compliance_result = rule_engine.evaluate_compliance(
+            declarations=fused_declarations,
+            product_category=product_category,
+            is_imported=is_imported,
+            is_perishable=is_perishable,
+            is_complete_scan=is_complete_scan,
+        )
+    except Exception as rule_err:
+        logger.error(f"Rule engine execution failed on fused declarations: {rule_err}")
+        fail_res = ComplianceResult(
+            verdict=ComplianceVerdict.NEEDS_REVIEW,
+            compliance_score=0.0,
+            declarations=fused_declarations,
+            violations=[
+                Violation(
+                    rule_code="RULE-ENGINE-FAILURE",
+                    violation_type=ViolationType.other,
+                    severity=ViolationSeverity.critical,
+                    description=f"Legal Metrology rule engine execution failed on fused evidence: {rule_err}",
+                )
+            ],
+            evidence=EvidenceMetadata(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                rule_version=rule_engine.rules_version,
+                total_declarations_checked=len(fused_declarations),
+                total_violations_found=1,
+            ),
+        )
+        return quality_reports, fail_res, decoded_images, []
+
+    # If cross-view conflicts were detected during fusion, append them and fail safe to NEEDS_REVIEW
+    if conflict_violations:
+        compliance_result.violations.extend(conflict_violations)
+        compliance_result.verdict = ComplianceVerdict.NEEDS_REVIEW
+        compliance_result.compliance_score = min(compliance_result.compliance_score, 50.0)
+
+    # 4. Evidence Rendering per View (Coordinate-safe, view-anchored)
+    evidence_paths: List[str] = []
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    for view_idx, img in enumerate(decoded_images):
+        if img is None:
+            continue
+        # Bounding boxes for this view only
+        view_decls = [d for d in compliance_result.declarations if d.image_index == view_idx]
+
+        if is_deskewed_flags[view_idx]:
+            safe_view_decls = [d.model_copy(update={"bounding_box": None}) for d in view_decls]
+        else:
+            safe_view_decls = view_decls
+
+        view_comp_res = compliance_result.model_copy(update={"declarations": safe_view_decls})
+        ev_file_path = os.path.join(output_dir, f"evidence_{view_idx}.jpg") if output_dir else None
+
+        try:
+            _, updated_ev = render_evidence_overlay(
+                image=img,
+                compliance_result=view_comp_res,
+                output_path=ev_file_path,
+            )
+            if ev_file_path:
+                evidence_paths.append(ev_file_path)
+                # Primary view alias
+                if view_idx == 0:
+                    primary_path = os.path.join(output_dir, "evidence.jpg")
+                    try:
+                        shutil.copyfile(ev_file_path, primary_path)
+                    except Exception:
+                        pass
+        except Exception as rend_err:
+            logger.warning(f"Visual evidence rendering encountered a non-fatal error for view {view_idx}: {rend_err}")
+
+    # Set composite evidence metadata
+    primary_annotated_path = evidence_paths[0] if evidence_paths else (os.path.join(output_dir, "evidence.jpg") if output_dir else None)
+    compliance_result.evidence = EvidenceMetadata(
+        annotated_image_path=primary_annotated_path,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        rule_version=rule_engine.rules_version,
+        total_declarations_checked=len(compliance_result.declarations),
+        total_violations_found=len(compliance_result.violations),
+    )
+
+    return quality_reports, compliance_result, decoded_images, evidence_paths
 
 
 def process_compliance_from_bytes(
@@ -244,55 +515,30 @@ def process_compliance_from_bytes(
     is_complete_scan: bool = False,
     output_evidence_path: Optional[str] = None,
 ) -> Tuple[Optional[ImageQualityReport], ComplianceResult, Optional[np.ndarray]]:
-    """Decode raw uploaded image file bytes and execute the compliance inspection pipeline.
+    """Decode raw uploaded single-image bytes and execute the compliance inspection pipeline.
 
-    Args:
-        file_bytes: Raw binary bytes of uploaded image.
-        filename: Optional filename for logging/diagnostics.
-        product_category: Optional product category hint.
-        is_imported: Optional import flag.
-        is_perishable: Optional perishability flag.
-        is_complete_scan: Multi-panel complete scan flag (defaults to False).
-        output_evidence_path: Optional file path to save annotated evidence image.
-
-    Returns:
-        Tuple of (ImageQualityReport, ComplianceResult, decoded_bgr_image)
+    Backward-compatible single-view wrapper around process_multi_view_compliance_from_bytes.
     """
-    is_valid, err_msg, decoded_image = validate_image_file(file_bytes, filename=filename)
-    if not is_valid or decoded_image is None:
-        error_description = err_msg or "Failed to validate or decode image bytes."
-        return (
-            None,
-            ComplianceResult(
-                verdict=ComplianceVerdict.NEEDS_REVIEW,
-                compliance_score=0.0,
-                declarations=[],
-                violations=[
-                    Violation(
-                        rule_code="IMAGE-INVALID",
-                        violation_type=ViolationType.other,
-                        severity=ViolationSeverity.major,
-                        description=error_description,
-                    )
-                ],
-                evidence=EvidenceMetadata(
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    rule_version=rule_engine.rules_version,
-                    total_declarations_checked=0,
-                    total_violations_found=1,
-                ),
-            ),
-            None,
-        )
+    out_dir = os.path.dirname(output_evidence_path) if output_evidence_path else None
+    view = PackageViewPayload(file_bytes=file_bytes, filename=filename)
 
-    quality_report = check_image_quality(decoded_image)
-    compliance_result = process_compliance_inspection(
-        image=decoded_image,
+    q_reports, comp_res, decoded_imgs, ev_paths = process_multi_view_compliance_from_bytes(
+        views=[view],
         product_category=product_category,
         is_imported=is_imported,
         is_perishable=is_perishable,
         is_complete_scan=is_complete_scan,
-        output_evidence_path=output_evidence_path,
+        output_dir=out_dir,
     )
 
-    return quality_report, compliance_result, decoded_image
+    q_report = q_reports[0] if q_reports else None
+    decoded_img = decoded_imgs[0] if decoded_imgs else None
+
+    # If caller requested a specific output_evidence_path, ensure it exists
+    if output_evidence_path and ev_paths and ev_paths[0] != output_evidence_path and os.path.exists(ev_paths[0]):
+        try:
+            shutil.copyfile(ev_paths[0], output_evidence_path)
+        except Exception:
+            pass
+
+    return q_report, comp_res, decoded_img

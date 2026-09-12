@@ -79,6 +79,12 @@ class ExtractedDeclaration(BaseModel):
     source: Optional[DeclarationSource] = Field(
         default=None, description="Extraction source modality"
     )
+    image_index: Optional[int] = Field(
+        default=None, description="Zero-based index of the originating image in a multi-view inspection"
+    )
+    image_name: Optional[str] = Field(
+        default=None, description="Filename or view identifier of the originating image"
+    )
     created_at: Optional[str] = Field(default=None, description="ISO8601 creation timestamp")
 
 

@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowRight,
-  FileImage,
+  Layers,
   Loader2,
+  Plus,
   ScanLine,
   UploadCloud,
   X,
@@ -27,15 +28,22 @@ const SUPPORTED_CATEGORIES = [
   'General Commodity',
 ]
 
+interface ViewItem {
+  id: string
+  file: File
+  previewUrl: string
+}
+
 export const NewInspectionPage: React.FC = () => {
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const addFileInputRef = useRef<HTMLInputElement>(null)
   const isMountedRef = useRef<boolean>(true)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [views, setViews] = useState<ViewItem[]>([])
   const [productCategory, setProductCategory] = useState<string>('')
+  const [isCompleteScan, setIsCompleteScan] = useState<boolean>(false)
   const [isDragging, setIsDragging] = useState<boolean>(false)
 
   // Scan Lifecycle State
@@ -52,29 +60,41 @@ export const NewInspectionPage: React.FC = () => {
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current)
       }
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl)
+      views.forEach((v) => URL.revokeObjectURL(v.previewUrl))
+    }
+  }, [views])
+
+  const validateAndAddFiles = (fileList: FileList | File[]) => {
+    const validFiles: File[] = []
+    let validationError: string | null = null
+
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i]
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        validationError = 'Unsupported file type. Please upload JPEG, PNG, or WebP images.'
+        continue
       }
+      if (file.size > 20 * 1024 * 1024) {
+        validationError = 'File size exceeds 20MB limit.'
+        continue
+      }
+      validFiles.push(file)
     }
-  }, [previewUrl])
 
-  const handleFileChange = (file: File | null) => {
-    if (!file) return
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setErrorMessage('Unsupported file type. Please upload a JPEG, PNG, or WebP image.')
-      return
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      setErrorMessage('File size exceeds 20MB limit.')
+    if (validationError && validFiles.length === 0) {
+      setErrorMessage(validationError)
       return
     }
 
-    setErrorMessage(null)
-    setSelectedFile(file)
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl)
+    if (validFiles.length > 0) {
+      setErrorMessage(null)
+      const newItems: ViewItem[] = validFiles.map((file) => ({
+        id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }))
+      setViews((prev) => [...prev, ...newItems])
     }
-    setPreviewUrl(URL.createObjectURL(file))
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -90,19 +110,26 @@ export const NewInspectionPage: React.FC = () => {
     e.preventDefault()
     setIsDragging(false)
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileChange(e.dataTransfer.files[0])
+      validateAndAddFiles(e.dataTransfer.files)
     }
+  }
+
+  const removeView = (id: string) => {
+    setViews((prev) => {
+      const target = prev.find((v) => v.id === id)
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl)
+      }
+      return prev.filter((v) => v.id !== id)
+    })
   }
 
   const resetSelection = () => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current)
     }
-    setSelectedFile(null)
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl)
-      setPreviewUrl(null)
-    }
+    views.forEach((v) => URL.revokeObjectURL(v.previewUrl))
+    setViews([])
     setIsSubmitting(false)
     setScanId(null)
     setScanStatus('idle')
@@ -148,10 +175,10 @@ export const NewInspectionPage: React.FC = () => {
           setScanStatus('processing')
           setStatusMessage(
             attempt > 8
-              ? 'Evaluating Legal Metrology rules and generating evidence overlay...'
+              ? 'Fusing multi-view declarations and evaluating Legal Metrology rules...'
               : attempt > 3
-              ? 'Extracting mandatory declarations with Gemini AI...'
-              : 'Preprocessing image and running OCR token extraction...'
+              ? 'Extracting package declarations with OCR & Gemini AI...'
+              : 'Preprocessing package views and executing quality audit...'
           )
           pollScanStatus(id, attempt + 1)
         }
@@ -166,8 +193,8 @@ export const NewInspectionPage: React.FC = () => {
   }
 
   const handleSubmitScan = async () => {
-    if (!selectedFile) {
-      setErrorMessage('Please select or capture a package image first.')
+    if (views.length === 0) {
+      setErrorMessage('Please select or capture at least one package image.')
       return
     }
 
@@ -175,10 +202,16 @@ export const NewInspectionPage: React.FC = () => {
       setIsSubmitting(true)
       setErrorMessage(null)
       setScanStatus('uploading')
-      setStatusMessage('Uploading package image to PackSure server...')
+      setStatusMessage(
+        views.length > 1
+          ? `Uploading ${views.length} package views to PackSure server...`
+          : 'Uploading package image to PackSure server...'
+      )
 
+      const files = views.map((v) => v.file)
       const initRes = await createScan({
-        image: selectedFile,
+        images: files,
+        is_complete_scan: isCompleteScan,
         product_category: productCategory.trim() ? productCategory.trim() : undefined,
       })
 
@@ -186,7 +219,7 @@ export const NewInspectionPage: React.FC = () => {
 
       setScanId(initRes.scan_id)
       setScanStatus('pending')
-      setStatusMessage('Image accepted. Starting compliance pipeline...')
+      setStatusMessage('Images accepted. Starting compliance pipeline...')
 
       // Begin safe polling loop
       pollScanStatus(initRes.scan_id, 0)
@@ -206,7 +239,7 @@ export const NewInspectionPage: React.FC = () => {
           New Inspection
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Upload or capture packaged commodity images for Legal Metrology (Packaged Commodities) Rules, 2011 compliance verification.
+          Upload or capture single or multi-view package images for Legal Metrology (Packaged Commodities) Rules, 2011 compliance verification.
         </p>
       </div>
 
@@ -229,11 +262,11 @@ export const NewInspectionPage: React.FC = () => {
       {/* Upload Workstation */}
       <Card
         title="Package Upload Workstation"
-        subtitle="Supported formats: JPEG, PNG, WebP (Max: 20MB)"
+        subtitle="Supported formats: JPEG, PNG, WebP (Max: 20MB per image)"
       >
         <div className="space-y-6">
           {/* File Dropzone Area */}
-          {!selectedFile ? (
+          {views.length === 0 ? (
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -248,11 +281,12 @@ export const NewInspectionPage: React.FC = () => {
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 accept="image/jpeg,image/png,image/webp"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files && e.target.files.length > 0) {
-                    handleFileChange(e.target.files[0])
+                    validateAndAddFiles(e.target.files)
                   }
                 }}
               />
@@ -260,51 +294,104 @@ export const NewInspectionPage: React.FC = () => {
                 <UploadCloud className="w-7 h-7" />
               </div>
               <h3 className="text-base font-semibold text-slate-800">
-                Click to browse or drag and drop package image
+                Click to browse or drag and drop package image(s)
               </h3>
               <p className="text-xs text-slate-400 max-w-sm text-center mt-1">
-                Ensure packaging declarations (MRP, Net Quantity, Expiry, Manufacturer Address) are clearly visible and well-lit.
+                Upload single panel or multiple package views (Front, Back, Side) for comprehensive declaration fusion.
               </p>
               <div className="mt-4 flex items-center gap-2 text-xs text-slate-500 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-2xs">
                 <ScanLine className="w-3.5 h-3.5 text-brand-blue" />
-                <span>Single-panel & multi-attribute verification supported</span>
+                <span>Single-panel & multi-view evidence fusion supported</span>
               </div>
             </div>
           ) : (
-            /* Selected File Preview Card */
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row items-center gap-4">
-              {previewUrl && (
-                <img
-                  src={previewUrl}
-                  alt="Package Preview"
-                  className="w-24 h-24 sm:w-32 sm:h-32 object-cover rounded-md border border-slate-300 shadow-2xs"
-                />
-              )}
-              <div className="flex-1 space-y-1 text-center sm:text-left">
-                <div className="flex items-center justify-center sm:justify-start gap-2">
-                  <FileImage className="w-4 h-4 text-brand-blue" />
-                  <span className="text-sm font-semibold text-slate-800 break-all">
-                    {selectedFile.name}
+            /* Multi-View / Selected File Thumbnail List */
+            <div className="space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-brand-blue" />
+                  <span className="text-sm font-bold text-slate-800">
+                    Captured Package Views ({views.length})
                   </span>
                 </div>
-                <p className="text-xs text-slate-500">
-                  Size: {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Type: {selectedFile.type}
-                </p>
-                <div className="pt-2">
-                  <button
-                    onClick={resetSelection}
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={addFileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        validateAndAddFiles(e.target.files)
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
                     disabled={isSubmitting}
-                    className="text-xs text-red-600 hover:text-red-700 font-medium inline-flex items-center gap-1 disabled:opacity-50"
+                    icon={<Plus className="w-3.5 h-3.5" />}
+                    onClick={() => addFileInputRef.current?.click()}
                   >
-                    <X className="w-3.5 h-3.5" /> Remove & choose another image
-                  </button>
+                    Add package view
+                  </Button>
                 </div>
+              </div>
+
+              {/* View Cards Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {views.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-3 relative group"
+                  >
+                    <img
+                      src={item.previewUrl}
+                      alt={`Package View ${idx + 1}`}
+                      className="w-16 h-16 object-cover rounded-md border border-slate-300 shadow-2xs flex-shrink-0"
+                    />
+                    <div className="flex-1 min-w-0 pr-6">
+                      <span className="inline-block text-[11px] font-bold text-brand-blue bg-blue-50 px-1.5 py-0.5 rounded mb-1">
+                        View {idx + 1}
+                      </span>
+                      <p className="text-xs font-semibold text-slate-800 truncate" title={item.file.name}>
+                        {item.file.name}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {(item.file.size / (1024 * 1024)).toFixed(2)} MB
+                      </p>
+                    </div>
+                    {!isSubmitting && (
+                      <button
+                        onClick={() => removeView(item.id)}
+                        className="absolute top-2 right-2 text-slate-400 hover:text-red-600 p-1 rounded transition-colors"
+                        title="Remove view"
+                        aria-label="Remove view"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-1 flex items-center justify-between text-xs text-slate-500">
+                <span>{views.length} package panel view{views.length > 1 ? 's' : ''} staged for inspection</span>
+                <button
+                  onClick={resetSelection}
+                  disabled={isSubmitting}
+                  className="text-red-600 hover:text-red-700 font-medium inline-flex items-center gap-1 disabled:opacity-50"
+                >
+                  <X className="w-3.5 h-3.5" /> Clear all views
+                </button>
               </div>
             </div>
           )}
 
-          {/* Optional Category Selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+          {/* Inspection Options: Category & Complete-Scan Flag */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
             <div>
               <label htmlFor="product-category" className="block text-xs font-semibold text-slate-700 mb-1">
                 Product Category Hint (Optional)
@@ -327,6 +414,27 @@ export const NewInspectionPage: React.FC = () => {
                 Helps apply category-specific exemptions and mandatory rules.
               </p>
             </div>
+
+            <div className="flex flex-col justify-start">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Inspection Completeness
+              </label>
+              <label className="flex items-start gap-2.5 p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100/70 cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={isCompleteScan}
+                  onChange={(e) => setIsCompleteScan(e.target.checked)}
+                  disabled={isSubmitting}
+                  className="mt-0.5 rounded border-slate-300 text-brand-blue focus:ring-brand-blue h-4 w-4"
+                />
+                <div className="text-xs">
+                  <span className="font-semibold text-slate-800">Complete Package Scan</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Indicates all package panels have been captured. Enables strict statutory missing-declaration evaluation.
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* Processing Progress Status Display */}
@@ -347,21 +455,21 @@ export const NewInspectionPage: React.FC = () => {
                 <div className="bg-brand-blue h-full w-full animate-pulse" />
               </div>
               <p className="text-xs text-blue-700/80">
-                Running OpenCV quality check $\rightarrow$ Tesseract OCR $\rightarrow$ Gemini 3.6 Flash structured extraction $\rightarrow$ Rule engine audit.
+                Running OpenCV quality check $\rightarrow$ Tesseract OCR $\rightarrow$ Gemini structured extraction $\rightarrow$ Multi-view evidence fusion $\rightarrow$ Rule engine audit.
               </p>
             </div>
           )}
 
           {/* Submission Action Bar */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-            {selectedFile && !isSubmitting && (
+            {views.length > 0 && !isSubmitting && (
               <Button variant="outline" onClick={resetSelection}>
                 Cancel
               </Button>
             )}
             <Button
               onClick={handleSubmitScan}
-              disabled={!selectedFile || isSubmitting}
+              disabled={views.length === 0 || isSubmitting}
               icon={
                 isSubmitting ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -370,7 +478,11 @@ export const NewInspectionPage: React.FC = () => {
                 )
               }
             >
-              {isSubmitting ? 'Analyzing Package...' : 'Run Compliance Scan'}
+              {isSubmitting
+                ? 'Analyzing Package...'
+                : views.length > 1
+                ? `Run Multi-View Compliance Scan (${views.length} views)`
+                : 'Run Compliance Scan'}
             </Button>
           </div>
         </div>

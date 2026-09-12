@@ -528,6 +528,12 @@ class SupabaseScanRepository(BaseScanRepository):
             return
         payloads = []
         for d in declarations:
+            bbox_dict = d.bounding_box.model_dump() if d.bounding_box else {}
+            if d.image_index is not None:
+                bbox_dict["image_index"] = d.image_index
+            if d.image_name is not None:
+                bbox_dict["image_name"] = d.image_name
+
             payloads.append(
                 {
                     "scan_id": scan_id,
@@ -535,7 +541,7 @@ class SupabaseScanRepository(BaseScanRepository):
                     "raw_value": d.raw_value,
                     "normalized_value": d.normalized_value,
                     "confidence": d.confidence,
-                    "bounding_box": d.bounding_box.model_dump() if d.bounding_box else None,
+                    "bounding_box": bbox_dict if bbox_dict else None,
                     "source": d.source.value if d.source else None,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -563,7 +569,16 @@ class SupabaseScanRepository(BaseScanRepository):
         results = []
         for row in data:
             bbox_raw = row.get("bounding_box")
-            bbox = BoundingBox(**bbox_raw) if bbox_raw and isinstance(bbox_raw, dict) else None
+            bbox = None
+            img_idx = row.get("image_index")
+            img_name = row.get("image_name")
+            if isinstance(bbox_raw, dict):
+                img_idx = bbox_raw.get("image_index", img_idx)
+                img_name = bbox_raw.get("image_name", img_name)
+                clean_box = {k: v for k, v in bbox_raw.items() if k in ("x", "y", "width", "height")}
+                if all(k in clean_box for k in ("x", "y", "width", "height")):
+                    bbox = BoundingBox(**clean_box)
+
             results.append(
                 ExtractedDeclaration(
                     id=row.get("id"),
@@ -575,6 +590,8 @@ class SupabaseScanRepository(BaseScanRepository):
                     confidence=row.get("confidence"),
                     bounding_box=bbox,
                     source=DeclarationSource(row["source"]) if row.get("source") else None,
+                    image_index=img_idx,
+                    image_name=img_name,
                     created_at=row.get("created_at"),
                 )
             )

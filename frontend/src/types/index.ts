@@ -67,7 +67,7 @@ export interface BoundingBox {
   height: number
 }
 
-/** Extracted declaration field with OCR/AI metadata, normalized values, and bounding box. */
+/** Extracted declaration field with OCR/AI metadata, normalized values, bounding box, and view provenance. */
 export interface ExtractedDeclaration {
   id?: string | null
   scan_id?: string | null
@@ -78,6 +78,8 @@ export interface ExtractedDeclaration {
   confidence?: number | null
   bounding_box?: BoundingBox | null
   source?: DeclarationSource | null
+  image_index?: number | null
+  image_name?: string | null
   created_at?: string | null
 }
 
@@ -132,9 +134,11 @@ export interface ComplianceResult {
 // 4. Scan API Request & Response Models
 // ============================================================
 
-/** Ingestion parameters for POST /api/v1/scans multipart upload. */
+/** Ingestion parameters for POST /api/v1/scans multipart upload. Supports single or multi-view images. */
 export interface ScanCreateParams {
-  image: File | Blob
+  image?: File | Blob
+  images?: (File | Blob)[]
+  is_complete_scan?: boolean
   product_category?: string | null
   user_id?: string | null
 }
@@ -154,8 +158,11 @@ export interface ScanResponse {
   compliance_score?: number | null
   product_category?: string | null
   image_url?: string | null
+  image_urls?: string[] | null
   processed_image_url?: string | null
   evidence_image_url?: string | null
+  evidence_image_urls?: string[] | null
+  is_complete_scan?: boolean
   declarations: ExtractedDeclaration[]
   violations: Violation[]
   reviewer_notes?: string | null

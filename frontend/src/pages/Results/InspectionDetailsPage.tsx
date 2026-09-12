@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Calendar,
+  Camera,
   Check,
   CheckCircle2,
   Crosshair,
@@ -370,15 +371,23 @@ export const InspectionDetailsPage: React.FC = () => {
   const declarations = scan?.declarations || []
   const violations = scan?.violations || []
 
+  // Cleanly distinguish statutory/legal violations from image capture / quality inspection issues
+  const statutoryViolations = violations.filter(
+    (v) => v.rule_code !== 'QUALITY-REJECT' && !v.rule_code.endsWith('-FAILURE')
+  )
+  const qualityIssues = violations.filter(
+    (v) => v.rule_code === 'QUALITY-REJECT' || v.rule_code.endsWith('-FAILURE')
+  )
+
   // Count declaration statuses
   const detectedCount = declarations.filter((d) => d.status === 'detected').length
   const uncertainCount = declarations.filter((d) => d.status === 'uncertain').length
   const missingCount = declarations.filter((d) => d.status === 'missing').length
 
-  // Count violation severities
-  const criticalViolations = violations.filter((v) => v.severity === 'critical')
-  const majorViolations = violations.filter((v) => v.severity === 'major')
-  const minorViolations = violations.filter((v) => v.severity === 'minor')
+  // Count statutory violation severities
+  const criticalViolations = statutoryViolations.filter((v) => v.severity === 'critical')
+  const majorViolations = statutoryViolations.filter((v) => v.severity === 'major')
+  const minorViolations = statutoryViolations.filter((v) => v.severity === 'minor')
 
   // Resolve visual evidence image URL
   const rawImageUrl = scan?.evidence_image_url || scan?.image_url
@@ -500,7 +509,9 @@ export const InspectionDetailsPage: React.FC = () => {
                 {verdict === 'PASS'
                   ? 'All mandatory rules satisfied'
                   : verdict === 'FAIL'
-                  ? `${violations.length} statutory violation(s)`
+                  ? `${statutoryViolations.length} statutory violation(s)`
+                  : qualityIssues.length > 0
+                  ? 'Halted on image quality inspection'
                   : 'Requires officer verification'}
               </p>
             </div>
@@ -544,15 +555,15 @@ export const InspectionDetailsPage: React.FC = () => {
           </div>
         </Card>
 
-        {/* Violations Detected */}
+        {/* Statutory Violations & Quality Issues */}
         <Card className="border-slate-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Violations Detected</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Statutory Violations</p>
               <h3 className="text-2xl font-bold text-slate-900 mt-1">
-                {violations.length}
+                {statutoryViolations.length}
               </h3>
-              <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1">
+              <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1 flex-wrap">
                 {criticalViolations.length > 0 && (
                   <span className="text-red-600 font-bold">{criticalViolations.length} Critical</span>
                 )}
@@ -562,17 +573,35 @@ export const InspectionDetailsPage: React.FC = () => {
                 {minorViolations.length > 0 && (
                   <span className="text-yellow-600 font-medium">{minorViolations.length} Minor</span>
                 )}
-                {violations.length === 0 && (
+                {statutoryViolations.length === 0 && (
                   <span className="text-emerald-600 font-medium">Zero non-compliance citations</span>
+                )}
+                {qualityIssues.length > 0 && (
+                  <>
+                    <span>•</span>
+                    <span className="text-amber-800 font-semibold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                      {qualityIssues.length} Quality Issue{qualityIssues.length > 1 ? 's' : ''}
+                    </span>
+                  </>
                 )}
               </div>
             </div>
             <div
               className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                violations.length === 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                statutoryViolations.length === 0
+                  ? qualityIssues.length > 0
+                    ? 'bg-amber-50 text-amber-600'
+                    : 'bg-emerald-50 text-emerald-600'
+                  : 'bg-red-50 text-red-600'
               }`}
             >
-              <ShieldAlert className="w-5 h-5" />
+              {statutoryViolations.length === 0 && qualityIssues.length > 0 ? (
+                <AlertTriangle className="w-5 h-5" />
+              ) : statutoryViolations.length === 0 ? (
+                <ShieldCheck className="w-5 h-5" />
+              ) : (
+                <ShieldAlert className="w-5 h-5" />
+              )}
             </div>
           </div>
         </Card>
@@ -614,10 +643,14 @@ export const InspectionDetailsPage: React.FC = () => {
                 : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}
           >
-            <span>Violations & Citations</span>
+            <span>Violations & Quality Issues</span>
             <span
               className={`text-xs px-1.5 py-0.5 rounded-full ${
-                violations.length > 0 ? 'bg-red-100 text-red-700 font-bold' : 'bg-slate-100 text-slate-600'
+                statutoryViolations.length > 0
+                  ? 'bg-red-100 text-red-700 font-bold'
+                  : qualityIssues.length > 0
+                  ? 'bg-amber-100 text-amber-800 font-semibold'
+                  : 'bg-slate-100 text-slate-600'
               }`}
             >
               {violations.length}
@@ -721,13 +754,48 @@ export const InspectionDetailsPage: React.FC = () => {
               </div>
             </Card>
 
-            {violations.length > 0 ? (
+            {/* Inspection Quality Issues (e.g. QUALITY-REJECT) */}
+            {qualityIssues.length > 0 && (
               <Card
-                title="Primary Statutory Violations"
-                subtitle="Immediate non-compliance citations"
+                title="Inspection Quality Issues"
+                subtitle="Evidence capture and image quality deficiencies preventing automated legal inspection"
               >
                 <div className="space-y-3">
-                  {violations.slice(0, 4).map((viol, idx) => (
+                  {qualityIssues.map((issue, idx) => (
+                    <div
+                      key={issue.id || idx}
+                      className="p-3 border rounded-lg text-xs space-y-1 bg-amber-50/70 border-amber-200"
+                    >
+                      <div className="flex items-center justify-between font-semibold">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-amber-950 font-bold">{issue.rule_code}</span>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 uppercase">
+                            Image Capture Deficiency
+                          </span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-amber-200 text-amber-900">
+                          {issue.severity}
+                        </span>
+                      </div>
+                      <p className="text-slate-800 leading-relaxed">{issue.description}</p>
+                      <div className="text-[11px] text-amber-900 pt-1 font-medium flex items-center gap-1">
+                        <Camera className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Recommendation: Retake photo in well-lit conditions with minimum 600×600 resolution and steady camera focus.</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {/* Primary Statutory Violations */}
+            {statutoryViolations.length > 0 ? (
+              <Card
+                title="Primary Statutory Violations"
+                subtitle="Immediate non-compliance citations under Legal Metrology Rules"
+              >
+                <div className="space-y-3">
+                  {statutoryViolations.slice(0, 4).map((viol, idx) => (
                     <div
                       key={viol.id || idx}
                       className={`p-3 border rounded-lg text-xs space-y-1 transition-colors ${
@@ -762,12 +830,12 @@ export const InspectionDetailsPage: React.FC = () => {
                       <p className="text-slate-800 leading-relaxed">{viol.description}</p>
                     </div>
                   ))}
-                  {violations.length > 4 && (
+                  {statutoryViolations.length > 4 && (
                     <button
                       onClick={() => setActiveTab('violations')}
                       className="text-xs text-brand-blue font-semibold hover:underline flex items-center gap-1 pt-1"
                     >
-                      View all {violations.length} violations in detail $\rightarrow$
+                      View all {statutoryViolations.length} statutory violations in detail $\rightarrow$
                     </button>
                   )}
                 </div>
@@ -778,9 +846,13 @@ export const InspectionDetailsPage: React.FC = () => {
                   <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-2">
                     <CheckCircle2 className="w-5 h-5" />
                   </div>
-                  <h4 className="text-sm font-semibold text-slate-800">Fully Compliant Package</h4>
+                  <h4 className="text-sm font-semibold text-slate-800">
+                    {qualityIssues.length > 0 ? 'No Statutory Violations Recorded' : 'Fully Compliant Package'}
+                  </h4>
                   <p className="text-xs text-slate-400 mt-1">
-                    No statutory violations detected across all verified packaging rules.
+                    {qualityIssues.length > 0
+                      ? 'No statutory violations were cited against this package; automated inspection was halted due to image quality.'
+                      : 'No statutory violations detected across all verified packaging rules.'}
                   </p>
                 </div>
               </Card>
@@ -938,123 +1010,174 @@ export const InspectionDetailsPage: React.FC = () => {
         </Card>
       )}
 
-      {/* TAB 3: VIOLATIONS */}
+      {/* TAB 3: VIOLATIONS & QUALITY ISSUES */}
       {activeTab === 'violations' && (
-        <Card
-          title="Statutory Rule Violations"
-          subtitle="Comprehensive Legal Metrology non-compliance citations with linked declaration evidence"
-        >
-          {violations.length === 0 ? (
-            <div className="py-12 text-center">
-              <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3">
-                <CheckCircle2 className="w-6 h-6" />
-              </div>
-              <h4 className="text-sm font-semibold text-slate-800">No Rule Violations Detected</h4>
-              <p className="text-xs text-slate-400 mt-1">
-                This packaged commodity complies with all evaluated Legal Metrology rules.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {violations.map((viol, idx) => {
-                const linkedDecl = viol.field_name
-                  ? declarations.find((d) => d.field_name === viol.field_name)
-                  : null
-
-                return (
+        <div className="space-y-6">
+          {/* Inspection Quality Issues (e.g. QUALITY-REJECT) */}
+          {qualityIssues.length > 0 && (
+            <Card
+              title="Inspection Quality Issues"
+              subtitle="Evidence capture and image quality deficiencies preventing automated legal inspection"
+            >
+              <div className="space-y-4">
+                {qualityIssues.map((issue, idx) => (
                   <div
-                    key={viol.id || idx}
-                    className={`p-4 border rounded-lg space-y-3 transition-all ${
-                      viol.severity === 'critical'
-                        ? 'border-red-200 bg-red-50/40'
-                        : viol.severity === 'major'
-                        ? 'border-orange-200 bg-orange-50/40'
-                        : 'border-yellow-200 bg-yellow-50/40'
-                    }`}
+                    key={issue.id || idx}
+                    className="p-4 border rounded-lg space-y-3 bg-amber-50/50 border-amber-200"
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <ShieldAlert
-                          className={`w-4 h-4 ${
-                            viol.severity === 'critical'
-                              ? 'text-red-600'
-                              : viol.severity === 'major'
-                              ? 'text-orange-600'
-                              : 'text-yellow-600'
-                          }`}
-                        />
-                        <span className="font-bold text-sm text-slate-900 font-mono">
-                          {viol.rule_code}
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        <span className="font-bold text-sm text-amber-950 font-mono">
+                          {issue.rule_code}
                         </span>
-                        {viol.field_name && (
-                          <span className="text-xs font-mono px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
-                            {viol.field_name}
-                          </span>
-                        )}
-                        <span className="text-[11px] text-slate-500 uppercase">
-                          ({viol.violation_type})
+                        <span className="text-[11px] text-amber-800 uppercase px-2 py-0.5 rounded bg-amber-100 border border-amber-200 font-semibold">
+                          Image Capture Deficiency
                         </span>
                       </div>
-                      <span
-                        className={`text-xs font-bold uppercase px-2.5 py-0.5 rounded-full self-start sm:self-auto ${
-                          viol.severity === 'critical'
-                            ? 'bg-red-200 text-red-900'
-                            : viol.severity === 'major'
-                            ? 'bg-orange-200 text-orange-900'
-                            : 'bg-yellow-200 text-yellow-900'
-                        }`}
-                      >
-                        {viol.severity}
+                      <span className="text-xs font-bold uppercase px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 self-start sm:self-auto">
+                        {issue.severity}
                       </span>
                     </div>
 
                     <p className="text-xs text-slate-800 leading-relaxed font-normal">
-                      {viol.description}
+                      {issue.description}
                     </p>
 
-                    {linkedDecl && (
-                      <div className="p-3 bg-white/90 rounded border border-slate-200 text-xs space-y-1">
-                        <div className="flex items-center justify-between text-slate-700">
-                          <span className="font-semibold flex items-center gap-1.5">
-                            <Crosshair className="w-3.5 h-3.5 text-brand-blue" />
-                            Linked Declaration Evidence:
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.2 rounded text-[10px] uppercase font-bold ${
-                              linkedDecl.status === 'detected'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : linkedDecl.status === 'uncertain'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}
-                          >
-                            Status: {linkedDecl.status}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
-                          <div>
-                            <span className="text-slate-400">Extracted Raw Text: </span>
-                            <span className="text-slate-900 font-medium">
-                              {linkedDecl.raw_value || 'None detected'}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-slate-400">Confidence: </span>
-                            <span className="font-mono text-slate-800">
-                              {linkedDecl.confidence !== null && linkedDecl.confidence !== undefined
-                                ? `${(linkedDecl.confidence * 100).toFixed(1)}%`
-                                : '—'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                    <div className="p-3 bg-white rounded border border-amber-200 text-xs text-amber-950 space-y-1">
+                      <span className="font-semibold flex items-center gap-1.5 text-amber-900">
+                        <Camera className="w-3.5 h-3.5 text-amber-700" />
+                        Inspector Recapture Guidelines:
+                      </span>
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        Ensure the product packaging is flat, evenly illuminated, fills at least 70% of the camera frame, and is captured at &ge; 600&times;600 resolution with sharp text focus.
+                      </p>
+                    </div>
                   </div>
-                )
-              })}
-            </div>
+                ))}
+              </div>
+            </Card>
           )}
-        </Card>
+
+          {/* Statutory Rule Violations */}
+          <Card
+            title="Statutory Rule Violations"
+            subtitle="Comprehensive Legal Metrology non-compliance citations with linked declaration evidence"
+          >
+            {statutoryViolations.length === 0 ? (
+              <div className="py-12 text-center">
+                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-semibold text-slate-800">No Statutory Violations Detected</h4>
+                <p className="text-xs text-slate-400 mt-1">
+                  {qualityIssues.length > 0
+                    ? 'No statutory rule violations were cited against this packaged commodity.'
+                    : 'This packaged commodity complies with all evaluated Legal Metrology rules.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {statutoryViolations.map((viol, idx) => {
+                  const linkedDecl = viol.field_name
+                    ? declarations.find((d) => d.field_name === viol.field_name)
+                    : null
+
+                  return (
+                    <div
+                      key={viol.id || idx}
+                      className={`p-4 border rounded-lg space-y-3 transition-all ${
+                        viol.severity === 'critical'
+                          ? 'border-red-200 bg-red-50/40'
+                          : viol.severity === 'major'
+                          ? 'border-orange-200 bg-orange-50/40'
+                          : 'border-yellow-200 bg-yellow-50/40'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <ShieldAlert
+                            className={`w-4 h-4 ${
+                              viol.severity === 'critical'
+                                ? 'text-red-600'
+                                : viol.severity === 'major'
+                                ? 'text-orange-600'
+                                : 'text-yellow-600'
+                            }`}
+                          />
+                          <span className="font-bold text-sm text-slate-900 font-mono">
+                            {viol.rule_code}
+                          </span>
+                          {viol.field_name && (
+                            <span className="text-xs font-mono px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
+                              {viol.field_name}
+                            </span>
+                          )}
+                          <span className="text-[11px] text-slate-500 uppercase">
+                            ({viol.violation_type})
+                          </span>
+                        </div>
+                        <span
+                          className={`text-xs font-bold uppercase px-2.5 py-0.5 rounded-full self-start sm:self-auto ${
+                            viol.severity === 'critical'
+                              ? 'bg-red-200 text-red-900'
+                              : viol.severity === 'major'
+                              ? 'bg-orange-200 text-orange-900'
+                              : 'bg-yellow-200 text-yellow-900'
+                          }`}
+                        >
+                          {viol.severity}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-800 leading-relaxed font-normal">
+                        {viol.description}
+                      </p>
+
+                      {linkedDecl && (
+                        <div className="p-3 bg-white/90 rounded border border-slate-200 text-xs space-y-1">
+                          <div className="flex items-center justify-between text-slate-700">
+                            <span className="font-semibold flex items-center gap-1.5">
+                              <Crosshair className="w-3.5 h-3.5 text-brand-blue" />
+                              Linked Declaration Evidence:
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[10px] uppercase font-bold ${
+                                linkedDecl.status === 'detected'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : linkedDecl.status === 'uncertain'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}
+                            >
+                              Status: {linkedDecl.status}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+                            <div>
+                              <span className="text-slate-400">Extracted Raw Text: </span>
+                              <span className="text-slate-900 font-medium">
+                                {linkedDecl.raw_value || 'None detected'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Confidence: </span>
+                              <span className="font-mono text-slate-800">
+                                {linkedDecl.confidence !== null && linkedDecl.confidence !== undefined
+                                  ? `${(linkedDecl.confidence * 100).toFixed(1)}%`
+                                  : '—'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+        </div>
       )}
 
       {/* TAB 4: FULL EVIDENCE VIEW */}

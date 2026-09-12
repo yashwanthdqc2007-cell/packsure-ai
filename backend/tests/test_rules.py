@@ -143,7 +143,7 @@ class TestMRPValidator(unittest.TestCase):
 
 
 class TestUnitSalePriceValidator(unittest.TestCase):
-    """Tests for Rule 6(1)(f) Unit Sale Price validator."""
+    """Tests for Rule 6(11) Unit Sale Price validator."""
 
     def test_not_applicable_passes_cleanly(self):
         res = validate_unit_sale_price(None, is_usp_applicable=False)
@@ -157,6 +157,238 @@ class TestUnitSalePriceValidator(unittest.TestCase):
         res = validate_unit_sale_price(None, is_usp_applicable=True)
         self.assertFalse(res.is_valid)
         self.assertEqual(res.violation_type, ViolationType.missing_declaration)
+
+    def test_250g_rs25_010_per_g_valid(self):
+        """250 g / ₹25 / ₹0.10 per g -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 0.10 / g",
+            net_qty_text="250 g",
+            mrp_text="MRP Rs. 25.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_250g_rs25_050_per_g_mismatch(self):
+        """250 g / ₹25 / ₹0.50 per g -> mathematical mismatch (expected ₹0.10)."""
+        res = validate_unit_sale_price(
+            "₹ 0.50 / g",
+            net_qty_text="250 g",
+            mrp_text="MRP Rs. 25.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.misleading)
+        self.assertIn("0.10", res.error_message)
+
+    def test_58g_rs20_correct_rounded_per_g(self):
+        """58 g / ₹20 -> 20 / 58 = 0.3448... rounded half-up to ₹ 0.34 / g."""
+        res = validate_unit_sale_price(
+            "₹ 0.34 / g",
+            net_qty_text="58 g",
+            mrp_text="MRP Rs. 20.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_5kg_rs275_55_per_kg_valid(self):
+        """5 kg / ₹275 / ₹55 per kg -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 55.00 / kg",
+            net_qty_text="5 kg",
+            mrp_text="MRP Rs. 275.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_sub_1kg_wrong_denominator_kg_rejected(self):
+        """Sub-1kg package declared in /kg must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 100.00 / kg",
+            net_qty_text="250 g",
+            mrp_text="MRP Rs. 25.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per g'", res.error_message)
+
+    def test_gt_1kg_wrong_denominator_g_rejected(self):
+        """Package > 1kg declared in /g must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 0.055 / g",
+            net_qty_text="5 kg",
+            mrp_text="MRP Rs. 275.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per kg'", res.error_message)
+
+    def test_volume_sub_1L_conversion(self):
+        """500 ml / ₹50 / ₹0.10 per ml -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 0.10 / ml",
+            net_qty_text="500 ml",
+            mrp_text="MRP Rs. 50.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_volume_sub_1L_wrong_denominator_L_rejected(self):
+        """500 ml declared in /L must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 100.00 / L",
+            net_qty_text="500 ml",
+            mrp_text="MRP Rs. 50.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per ml'", res.error_message)
+
+    def test_volume_gt_1L_conversion(self):
+        """2 L / ₹120 / ₹60 per L -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 60.00 / L",
+            net_qty_text="2 L",
+            mrp_text="MRP Rs. 120.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_volume_gt_1L_wrong_denominator_ml_rejected(self):
+        """2 L declared in /ml must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 0.06 / ml",
+            net_qty_text="2 L",
+            mrp_text="MRP Rs. 120.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per L'", res.error_message)
+
+    def test_length_sub_1m_conversion(self):
+        """50 cm / ₹10 / ₹0.20 per cm -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 0.20 / cm",
+            net_qty_text="50 cm",
+            mrp_text="MRP Rs. 10.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_length_sub_1m_wrong_denominator_m_rejected(self):
+        """50 cm declared in /m must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 20.00 / m",
+            net_qty_text="50 cm",
+            mrp_text="MRP Rs. 10.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per cm'", res.error_message)
+
+    def test_length_gt_1m_conversion(self):
+        """5 m / ₹100 / ₹20 per m -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 20.00 / m",
+            net_qty_text="5 m",
+            mrp_text="MRP Rs. 100.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_length_gt_1m_wrong_denominator_cm_rejected(self):
+        """5 m declared in /cm must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 0.20 / cm",
+            net_qty_text="5 m",
+            mrp_text="MRP Rs. 100.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per m'", res.error_message)
+
+    def test_count_based_commodity(self):
+        """10 units / ₹25 / ₹2.50 per piece -> valid."""
+        res = validate_unit_sale_price(
+            "₹ 2.50 / piece",
+            net_qty_text="10 units",
+            mrp_text="MRP Rs. 25.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_count_wrong_denominator(self):
+        """10 units declared with mass denominator /kg must fail with invalid_unit."""
+        res = validate_unit_sale_price(
+            "₹ 2.50 / kg",
+            net_qty_text="10 units",
+            mrp_text="MRP Rs. 25.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_unit)
+        self.assertIn("Mandatory denominator is 'per number/unit/piece'", res.error_message)
+
+    def test_equivalent_internal_unit_normalization_2000g(self):
+        """2000 g package (> 1 kg) normalized internally to 2 kg with ₹60/kg rate."""
+        res = validate_unit_sale_price(
+            "₹ 60.00 / kg",
+            net_qty_text="2000 g",
+            mrp_text="MRP Rs. 120.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_malformed_usp_syntax(self):
+        """Unparseable USP syntax triggers invalid_format."""
+        res = validate_unit_sale_price("not a valid price", is_usp_applicable=True)
+        self.assertFalse(res.is_valid)
+        self.assertEqual(res.violation_type, ViolationType.invalid_format)
+
+    def test_malformed_quantity_safe_fallback(self):
+        """Unparseable net quantity falls back safely without false legal violation."""
+        res = validate_unit_sale_price(
+            "₹ 0.50 / g",
+            net_qty_text="invalid qty text",
+            mrp_text="MRP Rs. 50.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_malformed_mrp_safe_fallback(self):
+        """Unparseable MRP falls back safely without false legal violation."""
+        res = validate_unit_sale_price(
+            "₹ 0.50 / g",
+            net_qty_text="100 g",
+            mrp_text="MRP unreadable",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_zero_quantity_safe_handling(self):
+        """Zero quantity handled gracefully."""
+        res = validate_unit_sale_price(
+            "₹ 0.50 / g",
+            net_qty_text="0 g",
+            mrp_text="MRP Rs. 50.00 (incl. of all taxes)",
+            is_usp_applicable=True,
+        )
+        self.assertTrue(res.is_valid)
+
+    def test_exact_1kg_boundary_exemption_handling(self):
+        """1 kg exact package is exempt under Rule 6(11)."""
+        res = validate_unit_sale_price(
+            "₹ 50.00 / kg",
+            net_qty_text="1 kg",
+            mrp_text="MRP Rs. 50.00 (incl. of all taxes)",
+            is_usp_applicable=False,
+        )
+        self.assertTrue(res.is_valid)
 
 
 class TestDatesAndExpiryValidator(unittest.TestCase):

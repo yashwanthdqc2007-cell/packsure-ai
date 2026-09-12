@@ -19,6 +19,7 @@ Invariants:
 - Output is structured tuple: (is_valid, error_message, violation_type).
 """
 
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import NamedTuple, Optional, Tuple
 from app.schemas.violation import ViolationType
@@ -251,37 +252,346 @@ def validate_mrp(
 
 
 # =====================================================================
-# 7. Unit Sale Price Validator (Rule 6(1)(f) & Rule 6(11))
+# 7. Unit Sale Price Validator (Rule 6(11))
 # =====================================================================
+
+MASS_GRAM_UNITS = {"g", "gm", "gms", "gram", "grams"}
+MASS_KG_UNITS = {"kg", "kgs", "kilo", "kilos", "kilogram", "kilograms"}
+MASS_MG_UNITS = {"mg", "milligram", "milligrams"}
+
+VOL_ML_UNITS = {"ml", "millilitre", "millilitres", "milliliter", "milliliters"}
+VOL_L_UNITS = {"l", "lt", "ltr", "ltrs", "litre", "litres", "liter", "liters"}
+
+LEN_CM_UNITS = {"cm", "centimetre", "centimetres", "centimeter", "centimeters"}
+LEN_M_UNITS = {"m", "metre", "meter", "metres", "meters"}
+LEN_MM_UNITS = {"mm", "millimetre", "millimeter", "millimetres", "millimeters"}
+
+COUNT_UNITS = {
+    "n", "u", "unit", "units", "piece", "pieces", "item", "items",
+    "no", "nos", "pkt", "pkts", "pack", "packs", "sachet", "sachets",
+    "wipe", "wipes", "tablet", "tablets", "capsule", "capsules",
+}
+
+
+def _parse_net_quantity_spec(text: Optional[str]) -> Optional[Tuple[Decimal, str, str]]:
+    """Parse net quantity text into (normalized_magnitude, dimension_type, raw_unit).
+
+    Dimensions:
+    - 'mass': normalized to grams (Decimal)
+    - 'volume': normalized to millilitres (Decimal)
+    - 'length': normalized to centimetres (Decimal)
+    - 'count': normalized to count (Decimal)
+    """
+    if not text or not text.strip():
+        return None
+
+    # Strip prefixes like 'Net Qty:', 'Net Wt:', 'Net Weight:', 'Quantity:'
+    cleaned = re.sub(
+        r"^(?:net\s*(?:qty|quantity|wt|weight|contents?)|qty|wt)\s*[:\-]?\s*",
+        "",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+
+    # Match numeric value and following unit symbol
+    match = re.search(r"(\d+(?:\.\d+)?)\s*([a-zA-Z²³]+)", cleaned)
+    if not match:
+        return None
+
+    try:
+        val_dec = Decimal(match.group(1))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+    if val_dec <= Decimal("0"):
+        return None
+
+    raw_unit = match.group(2).lower()
+
+    # Classify dimension and normalize to base unit
+    if raw_unit in MASS_GRAM_UNITS:
+        return val_dec, "mass", raw_unit
+    elif raw_unit in MASS_KG_UNITS:
+        return val_dec * Decimal("1000"), "mass", raw_unit
+    elif raw_unit in MASS_MG_UNITS:
+        return val_dec / Decimal("1000"), "mass", raw_unit
+    elif raw_unit in VOL_ML_UNITS:
+        return val_dec, "volume", raw_unit
+    elif raw_unit in VOL_L_UNITS:
+        return val_dec * Decimal("1000"), "volume", raw_unit
+    elif raw_unit in LEN_CM_UNITS:
+        return val_dec, "length", raw_unit
+    elif raw_unit in LEN_M_UNITS:
+        return val_dec * Decimal("100"), "length", raw_unit
+    elif raw_unit in LEN_MM_UNITS:
+        return val_dec / Decimal("10"), "length", raw_unit
+    elif raw_unit in COUNT_UNITS:
+        return val_dec, "count", raw_unit
+
+    return None
+
+
+def _parse_mrp_amount(text: Optional[str]) -> Optional[Decimal]:
+    """Extract numeric MRP decimal value from MRP text."""
+    if not text or not text.strip():
+        return None
+
+    # Search for currency pattern or decimal number
+    match = re.search(r"(?:₹|rs\.?|inr|mrp)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)", text, re.IGNORECASE)
+    if not match:
+        return None
+
+    raw_num = match.group(1).replace(",", "")
+    try:
+        val = Decimal(raw_num)
+        return val if val > Decimal("0") else None
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _parse_declared_usp(text: Optional[str]) -> Optional[Tuple[Decimal, str]]:
+    """Parse declared Unit Sale Price into (rate_decimal, denominator_unit_str)."""
+    if not text or not text.strip():
+        return None
+
+    cleaned = text.strip()
+    # Match strings like '₹ 0.10 / g', 'Rs. 55.00 / kg', '0.50/g', '₹ 1.25 per N', 'Rs. 25 per piece'
+    pattern = re.compile(
+        r"(?:usp\s*[:\-]?)?\s*(?:₹|rs\.?|inr)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:/|per|/-)\s*(?:1\s*)?([a-zA-Z²³]+)",
+        re.IGNORECASE,
+    )
+    match = pattern.search(cleaned)
+    if not match:
+        return None
+
+    raw_num = match.group(1).replace(",", "")
+    unit_str = match.group(2).lower()
+    try:
+        rate = Decimal(raw_num)
+        return rate, unit_str
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
 
 def validate_unit_sale_price(
     value: Optional[str],
     net_qty_text: Optional[str] = None,
+    mrp_text: Optional[str] = None,
     is_usp_applicable: bool = False,
 ) -> ValidationResult:
-    """Validate Unit Sale Price when applicable by package quantity thresholds."""
+    """Validate Unit Sale Price under Rule 6(11).
+
+    Checks:
+    1. Statutory applicability (exempt packages pass cleanly).
+    2. Presence of USP declaration when mandatory.
+    3. Syntax & format validation.
+    4. Statutory denominator validation (<1kg -> /g, >1kg -> /kg, <1L -> /ml, >1L -> /L, <1m -> /cm, >1m -> /m, count>1 -> /N or /unit).
+    5. Mathematical cross-verification (declared rate vs expected rate = MRP / BaseQty with 2-decimal half-up rounding).
+    """
     if not is_usp_applicable:
         return ValidationResult(is_valid=True)
 
     if not value or not value.strip():
         return ValidationResult(
             is_valid=False,
-            error_message="Unit Sale Price is mandatory under Rule 6(1)(f) for packages > 100g/100ml but was not declared.",
+            error_message="Unit Sale Price is mandatory under Rule 6(11) for this package quantity but was not declared.",
             violation_type=ViolationType.missing_declaration,
         )
 
-    # Check format e.g. "Rs. 0.50 / g" or "Rs. 240.00 / kg"
-    usp_pattern = re.compile(
-        r"(?:₹|rs\.?|inr)?\s*\d+(?:\.\d+)?\s*(?:/|per)\s*(?:g|kg|ml|l|L|m|unit|N|U)\b",
-        re.IGNORECASE,
-    )
-    if not usp_pattern.search(value):
+    parsed_usp = _parse_declared_usp(value)
+    if not parsed_usp:
         return ValidationResult(
             is_valid=False,
             error_message=f"Unit Sale Price declaration '{value}' is not in the required '₹ xx.xx / unit' format.",
             violation_type=ViolationType.invalid_format,
         )
+
+    declared_rate, declared_unit = parsed_usp
+
+    # If Net Quantity text is available, perform denominator and calculation checks
+    if net_qty_text and net_qty_text.strip():
+        parsed_qty = _parse_net_quantity_spec(net_qty_text)
+        if parsed_qty:
+            norm_val, dim_type, _ = parsed_qty
+
+            # 1. Denominator Compliance Check
+            legal_unit_desc = ""
+            divisor = Decimal("0")
+
+            if dim_type == "mass":
+                if norm_val < Decimal("1000"):
+                    legal_unit_desc = "g"
+                    divisor = norm_val
+                    if declared_unit in MASS_KG_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per g' for net quantity < 1 kg (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                    elif declared_unit not in MASS_GRAM_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per g' for net quantity < 1 kg (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                elif norm_val > Decimal("1000"):
+                    legal_unit_desc = "kg"
+                    divisor = norm_val / Decimal("1000")
+                    if declared_unit in (MASS_GRAM_UNITS | MASS_MG_UNITS):
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per kg' for net quantity > 1 kg (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                    elif declared_unit not in MASS_KG_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per kg' for net quantity > 1 kg (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                else:
+                    # Exactly 1 kg (boundary exemption)
+                    divisor = Decimal("1") if declared_unit in MASS_KG_UNITS else norm_val
+
+            elif dim_type == "volume":
+                if norm_val < Decimal("1000"):
+                    legal_unit_desc = "ml"
+                    divisor = norm_val
+                    if declared_unit in VOL_L_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per ml' for net quantity < 1 L (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                    elif declared_unit not in VOL_ML_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per ml' for net quantity < 1 L (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                elif norm_val > Decimal("1000"):
+                    legal_unit_desc = "L"
+                    divisor = norm_val / Decimal("1000")
+                    if declared_unit in VOL_ML_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per L' for net quantity > 1 L (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                    elif declared_unit not in VOL_L_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per L' for net quantity > 1 L (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                else:
+                    # Exactly 1 L (boundary exemption)
+                    divisor = Decimal("1") if declared_unit in VOL_L_UNITS else norm_val
+
+            elif dim_type == "length":
+                if norm_val < Decimal("100"):
+                    legal_unit_desc = "cm"
+                    divisor = norm_val
+                    if declared_unit in LEN_M_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per cm' for net quantity < 1 m (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                    elif declared_unit not in LEN_CM_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per cm' for net quantity < 1 m (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                elif norm_val > Decimal("100"):
+                    legal_unit_desc = "m"
+                    divisor = norm_val / Decimal("100")
+                    if declared_unit in (LEN_CM_UNITS | LEN_MM_UNITS):
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per m' for net quantity > 1 m (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                    elif declared_unit not in LEN_M_UNITS:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                                f"Mandatory denominator is 'per m' for net quantity > 1 m (declared: '{net_qty_text}')."
+                            ),
+                            violation_type=ViolationType.invalid_unit,
+                        )
+                else:
+                    # Exactly 1 m (boundary exemption)
+                    divisor = Decimal("1") if declared_unit in LEN_M_UNITS else norm_val
+
+            elif dim_type == "count":
+                legal_unit_desc = "number/unit"
+                divisor = norm_val
+                if declared_unit not in COUNT_UNITS:
+                    return ValidationResult(
+                        is_valid=False,
+                        error_message=(
+                            f"Declared Unit Sale Price denominator '{declared_unit}' violates Rule 6(11). "
+                            f"Mandatory denominator is 'per number/unit/piece' for count commodity (declared: '{net_qty_text}')."
+                        ),
+                        violation_type=ViolationType.invalid_unit,
+                    )
+
+            # 2. Mathematical Cross-Verification Check
+            if mrp_text and mrp_text.strip() and divisor > Decimal("0"):
+                mrp_val = _parse_mrp_amount(mrp_text)
+                if mrp_val and mrp_val > Decimal("0"):
+                    expected_rate = (mrp_val / divisor).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    )
+                    declared_rate_rounded = declared_rate.quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    )
+                    if declared_rate_rounded != expected_rate:
+                        return ValidationResult(
+                            is_valid=False,
+                            error_message=(
+                                f"Unit Sale Price '₹ {declared_rate}' does not match expected statutory rate "
+                                f"'₹ {expected_rate:.2f}' calculated from MRP (₹ {mrp_val:.2f}) and Net Quantity "
+                                f"({net_qty_text}) under Rule 6(11)."
+                            ),
+                            violation_type=ViolationType.misleading,
+                        )
 
     return ValidationResult(is_valid=True)
 

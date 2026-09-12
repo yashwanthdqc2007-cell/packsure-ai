@@ -12,10 +12,12 @@ Implements Phase 5 rule evaluation pipeline:
 import json
 import os
 import re
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.rules.validators import (
+    _parse_net_quantity_spec,
     check_rule26_exemption,
     validate_address,
     validate_batch_number,
@@ -141,38 +143,40 @@ class RuleEngine:
         return False
 
     def _is_usp_applicable(self, net_qty_decl: Optional[ExtractedDeclaration]) -> bool:
-        """Check if Unit Sale Price is mandatory (> 100g / > 100ml / > 1m)."""
+        """Check if Unit Sale Price is mandatory under Rule 6(11).
+
+        Statutory exemptions under Rule 6(11) & Rule 26(a):
+        - Net quantity is exactly 1 kg, 1 L, 1 m, or 1 number/unit/piece.
+        - Small packages (<= 10g or <= 10ml) exempt under Rule 26(a).
+        - Insufficient / malformed quantity data does not trigger a false USP mandate.
+        """
         if not net_qty_decl:
             return False
         text = (net_qty_decl.normalized_value or net_qty_decl.raw_value or "").strip()
         if not text:
             return False
 
-        # Exemption if exactly 1kg, 1L, 1m, 1N
-        if re.search(r"\b1\s*(kg|l|L|m|N|U)\b", text):
+        parsed_qty = _parse_net_quantity_spec(text)
+        if not parsed_qty:
             return False
 
-        # Check if weight in grams > 100g
-        match_g = re.search(r"(\d+(?:\.\d+)?)\s*(?:g|gm|gms)\b", text, re.IGNORECASE)
-        if match_g and float(match_g.group(1)) > 100.0:
-            return True
+        norm_val, dim_type, _ = parsed_qty
 
-        # Check if weight in kg
-        match_kg = re.search(r"(\d+(?:\.\d+)?)\s*kg\b", text, re.IGNORECASE)
-        if match_kg and float(match_kg.group(1)) > 0.1:
-            return True
+        # Small package exemption (<= 10g / <= 10ml / <= 10cm) under Rule 26(a)
+        if dim_type in ("mass", "volume", "length") and norm_val <= Decimal("10"):
+            return False
 
-        # Check if volume in ml > 100ml
-        match_ml = re.search(r"(\d+(?:\.\d+)?)\s*ml\b", text, re.IGNORECASE)
-        if match_ml and float(match_ml.group(1)) > 100.0:
-            return True
+        # Exact 1-unit statutory exemptions under Rule 6(11)
+        if dim_type == "mass" and norm_val == Decimal("1000"):  # exact 1 kg (1000 g)
+            return False
+        if dim_type == "volume" and norm_val == Decimal("1000"):  # exact 1 L (1000 ml)
+            return False
+        if dim_type == "length" and norm_val == Decimal("100"):  # exact 1 m (100 cm)
+            return False
+        if dim_type == "count" and norm_val == Decimal("1"):  # exact 1 number / piece / unit
+            return False
 
-        # Check if volume in L
-        match_l = re.search(r"(\d+(?:\.\d+)?)\s*(?:l|L)\b", text, re.IGNORECASE)
-        if match_l and float(match_l.group(1)) > 0.1:
-            return True
-
-        return False
+        return True
 
     def evaluate_compliance(
         self,
@@ -228,9 +232,9 @@ class RuleEngine:
                 # Non-perishable goods are exempt from mandatory expiry date
                 continue
 
-            # Unit Sale Price Rule 6(1)(f) applicability check
-            if rule.rule_id == "LMR-R06-1-F" and not usp_applicable:
-                # Packages <= 100g/ml or exact 1kg/1L are exempt
+            # Unit Sale Price Rule 6(11) applicability check (supporting backward-compat LMR-R06-1-F)
+            if (rule.rule_id in ("LMR-R06-11", "LMR-R06-1-F") or rule.validator_type == "unit_sale_price") and not usp_applicable:
+                # Packages <= 10g/ml or exact 1kg/1L/1m/1N are exempt
                 continue
 
             declarations_checked_count += 1
@@ -285,7 +289,14 @@ class RuleEngine:
             elif rule.validator_type == "mrp":
                 val_result = validate_mrp(raw_v, norm_v)
             elif rule.validator_type == "unit_sale_price":
-                val_result = validate_unit_sale_price(raw_v, net_qty_text, is_usp_applicable=usp_applicable)
+                mrp_decl = decl_map.get("mrp")
+                mrp_text = (mrp_decl.normalized_value or mrp_decl.raw_value) if mrp_decl else None
+                val_result = validate_unit_sale_price(
+                    raw_v or norm_v,
+                    net_qty_text=net_qty_text,
+                    mrp_text=mrp_text,
+                    is_usp_applicable=usp_applicable,
+                )
             elif rule.validator_type == "batch_number":
                 val_result = validate_batch_number(raw_v)
             elif rule.validator_type == "expiry_date":

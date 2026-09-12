@@ -250,8 +250,42 @@ class TestComplianceEngine(unittest.TestCase):
         self.assertTrue(any(v.rule_code == "Rule-6(1)(e)" for v in res.violations))
 
     def test_unit_sale_price_threshold_applicability(self):
-        """USP is mandatory for packages > 100g, but not required for packages <= 100g."""
-        # 50g package without USP -> PASS
+        """USP applicability under Rule 6(11) and statutory exemptions."""
+        # 1. Small package (<= 10g) without USP -> PASS (exempt under Rule 26(a) & Rule 6(11))
+        decls_8g = [
+            d if d.field_name != "net_quantity" else ExtractedDeclaration(
+                field_name="net_quantity",
+                status=DeclarationStatus.detected,
+                raw_value="8 g",
+            )
+            for d in self.valid_food_declarations
+            if d.field_name != "unit_sale_price"
+        ]
+        res_8g = self.engine.evaluate_compliance(
+            declarations=decls_8g,
+            product_category="Confectionery",
+            is_complete_scan=True,
+        )
+        self.assertEqual(res_8g.verdict, ComplianceVerdict.PASS)
+
+        # 2. Exact 1 kg boundary package without USP -> PASS (exempt under Rule 6(11))
+        decls_1kg = [
+            d if d.field_name != "net_quantity" else ExtractedDeclaration(
+                field_name="net_quantity",
+                status=DeclarationStatus.detected,
+                raw_value="1 kg",
+            )
+            for d in self.valid_food_declarations
+            if d.field_name != "unit_sale_price"
+        ]
+        res_1kg = self.engine.evaluate_compliance(
+            declarations=decls_1kg,
+            product_category="Food",
+            is_complete_scan=True,
+        )
+        self.assertEqual(res_1kg.verdict, ComplianceVerdict.PASS)
+
+        # 3. 50g package (> 10g, != 1kg) without USP -> FAIL (mandatory under Rule 6(11))
         decls_50g = [
             d if d.field_name != "net_quantity" else ExtractedDeclaration(
                 field_name="net_quantity",
@@ -266,9 +300,10 @@ class TestComplianceEngine(unittest.TestCase):
             product_category="Food",
             is_complete_scan=True,
         )
-        self.assertEqual(res_50g.verdict, ComplianceVerdict.PASS)
+        self.assertEqual(res_50g.verdict, ComplianceVerdict.FAIL)
+        self.assertTrue(any(v.rule_code == "Rule-6(11)" for v in res_50g.violations))
 
-        # 500g package without USP -> FAIL
+        # 4. 500g package without USP -> FAIL
         decls_500g = [d for d in self.valid_food_declarations if d.field_name != "unit_sale_price"]
         res_500g = self.engine.evaluate_compliance(
             declarations=decls_500g,
@@ -276,7 +311,25 @@ class TestComplianceEngine(unittest.TestCase):
             is_complete_scan=True,
         )
         self.assertEqual(res_500g.verdict, ComplianceVerdict.FAIL)
-        self.assertTrue(any(v.rule_code == "Rule-6(1)(f)" for v in res_500g.violations))
+        self.assertTrue(any(v.rule_code == "Rule-6(11)" for v in res_500g.violations))
+
+        # 5. 500g package with mismatching USP (declared ₹0.50/g vs calculated ₹0.11/g) -> FAIL
+        decls_mismatch = [
+            d if d.field_name != "unit_sale_price" else ExtractedDeclaration(
+                field_name="unit_sale_price",
+                status=DeclarationStatus.detected,
+                raw_value="USP ₹ 0.50 / g",
+            )
+            for d in self.valid_food_declarations
+        ]
+        res_mismatch = self.engine.evaluate_compliance(
+            declarations=decls_mismatch,
+            product_category="Food Grains",
+            is_complete_scan=True,
+        )
+        self.assertEqual(res_mismatch.verdict, ComplianceVerdict.FAIL)
+        usp_violation = next(v for v in res_mismatch.violations if v.rule_code == "Rule-6(11)")
+        self.assertEqual(usp_violation.violation_type, ViolationType.misleading)
 
     def test_non_perishable_hardware_exempt_from_expiry(self):
         """Non-perishable hardware commodity without expiry date must PASS."""

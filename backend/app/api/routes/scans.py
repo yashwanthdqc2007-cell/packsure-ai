@@ -32,6 +32,7 @@ from app.schemas.declaration import (
     DeclarationStatus,
     ExtractedDeclaration,
 )
+from app.schemas.guidance import InspectionGuidance
 from app.schemas.scan import (
     ScanInitResponse,
     ScanResponse,
@@ -163,6 +164,7 @@ def process_scan_background(
                 "evidence_image_url": primary_evidence,
                 "evidence_image_urls": normalized_ev_paths if normalized_ev_paths else ([primary_evidence] if primary_evidence else []),
                 "is_complete_scan": is_complete_scan,
+                "guidance": compliance_result.guidance.model_dump() if compliance_result.guidance else None,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -300,6 +302,17 @@ def get_scan(
     raw_img_urls = scan.get("image_urls")
     raw_ev_urls = scan.get("evidence_image_urls")
 
+    raw_guidance = scan.get("guidance")
+    guidance_obj = None
+    if raw_guidance:
+        if isinstance(raw_guidance, dict):
+            try:
+                guidance_obj = InspectionGuidance.model_validate(raw_guidance)
+            except Exception:
+                guidance_obj = None
+        elif isinstance(raw_guidance, InspectionGuidance):
+            guidance_obj = raw_guidance
+
     return ScanResponse(
         scan_id=scan["id"],
         status=scan_status_enum,
@@ -315,6 +328,7 @@ def get_scan(
         declarations=declarations,
         violations=violations,
         reviewer_notes=scan.get("reviewer_notes"),
+        guidance=guidance_obj,
         created_at=scan.get("created_at", datetime.now(timezone.utc).isoformat()),
         completed_at=scan.get("completed_at"),
     )

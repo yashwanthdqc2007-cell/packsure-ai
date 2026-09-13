@@ -127,11 +127,42 @@ export interface ComplianceResult {
   violations: Violation[]
   evidence_image_url?: string | null
   evidence?: EvidenceMetadata | null
+  guidance?: InspectionGuidance | null
 }
 
 
 // ============================================================
-// 4. Scan API Request & Response Models
+// 4. Inspection Guidance Models
+// ============================================================
+
+export type GuidancePriority = 'none' | 'low' | 'medium' | 'high' | 'critical'
+export type GuidanceIssueCategory = 'quality' | 'conflict' | 'missing_evidence' | 'uncertain_evidence'
+export type GuidanceTargetPanel = 'front' | 'back' | 'side' | 'top' | 'bottom' | 'mrp_panel' | 'nutrition_table' | 'generic'
+
+export interface GuidanceIssue {
+  code: string
+  category: GuidanceIssueCategory
+  title: string
+  description: string
+  suggested_action: string
+  target_panel?: GuidanceTargetPanel | null
+  affected_view_index?: number | null
+  affected_fields: string[]
+}
+
+export interface InspectionGuidance {
+  needs_recapture: boolean
+  priority: GuidancePriority
+  headline: string
+  target_panels: string[]
+  issues: GuidanceIssue[]
+  actionable_steps: string[]
+  coverage_estimate_pct?: number | null
+}
+
+
+// ============================================================
+// 5. Scan API Request & Response Models
 // ============================================================
 
 /** Ingestion parameters for POST /api/v1/scans multipart upload. Supports single or multi-view images. */
@@ -166,6 +197,7 @@ export interface ScanResponse {
   declarations: ExtractedDeclaration[]
   violations: Violation[]
   reviewer_notes?: string | null
+  guidance?: InspectionGuidance | null
   created_at: string
   completed_at?: string | null
 }

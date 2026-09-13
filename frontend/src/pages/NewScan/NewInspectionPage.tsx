@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowRight,
+  Camera,
   Layers,
   Loader2,
   Plus,
@@ -36,6 +37,7 @@ interface ViewItem {
 
 export const NewInspectionPage: React.FC = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addFileInputRef = useRef<HTMLInputElement>(null)
   const isMountedRef = useRef<boolean>(true)
@@ -52,6 +54,13 @@ export const NewInspectionPage: React.FC = () => {
   const [, setScanStatus] = useState<'idle' | 'uploading' | 'pending' | 'processing' | 'complete' | 'failed'>('idle')
   const [statusMessage, setStatusMessage] = useState<string>('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    const cat = searchParams.get('category')
+    if (cat && !productCategory) {
+      setProductCategory(cat)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     isMountedRef.current = true
@@ -459,6 +468,28 @@ export const NewInspectionPage: React.FC = () => {
               </p>
             </div>
           )}
+
+          {/* Recommended Panels Helper Guide */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+              <Camera className="w-3.5 h-3.5 text-brand-blue" />
+              <span>Recommended Panels for Complete Legal Metrology Verification:</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-600">
+              <div className="p-2 bg-white rounded border border-slate-200">
+                <span className="font-bold text-slate-800 block mb-0.5">1. Front (PDP)</span>
+                Generic commodity name & net quantity.
+              </div>
+              <div className="p-2 bg-white rounded border border-slate-200">
+                <span className="font-bold text-slate-800 block mb-0.5">2. Back Panel</span>
+                MRP, Unit Sale Price (USP), Batch No, Mfg & Expiry dates.
+              </div>
+              <div className="p-2 bg-white rounded border border-slate-200">
+                <span className="font-bold text-slate-800 block mb-0.5">3. Side / Flap</span>
+                Manufacturer / Packer name, address & Customer Care contact.
+              </div>
+            </div>
+          </div>
 
           {/* Submission Action Bar */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">

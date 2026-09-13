@@ -39,6 +39,7 @@ from app.schemas.violation import Violation, ViolationSeverity, ViolationType
 from app.services.ai_service import extract_declarations
 from app.services.evidence_service import render_evidence_overlay
 from app.services.fusion_service import fuse_declarations
+from app.services.guidance_service import generate_inspection_guidance
 from app.services.image_service import (
     DESKEW_MAX_ANGLE_LIMIT,
     DESKEW_MIN_ANGLE_TRIGGER,
@@ -99,24 +100,30 @@ def process_compliance_inspection(
     if quality_report.status == QualityStatus.rejected or not quality_report.is_valid:
         recapture_info = quality_report.recapture_reason or "Image quality rejected due to blur, lighting, or resolution."
         logger.warning(f"Inspection halted: {recapture_info}")
+        quality_viol = Violation(
+            rule_code="QUALITY-REJECT",
+            violation_type=ViolationType.illegible,
+            severity=ViolationSeverity.major,
+            description=f"Image quality insufficient for automated legal inspection: {recapture_info}",
+        )
+        fail_guidance = generate_inspection_guidance(
+            quality_reports=[quality_report],
+            violations=[quality_viol],
+            is_complete_scan=is_complete_scan,
+            product_category=product_category,
+        )
         return ComplianceResult(
             verdict=ComplianceVerdict.NEEDS_REVIEW,
             compliance_score=0.0,
             declarations=[],
-            violations=[
-                Violation(
-                    rule_code="QUALITY-REJECT",
-                    violation_type=ViolationType.illegible,
-                    severity=ViolationSeverity.major,
-                    description=f"Image quality insufficient for automated legal inspection: {recapture_info}",
-                )
-            ],
+            violations=[quality_viol],
             evidence=EvidenceMetadata(
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 rule_version=rule_engine.rules_version,
                 total_declarations_checked=0,
                 total_violations_found=1,
             ),
+            guidance=fail_guidance,
         )
 
     # 3. OpenCV Preprocessing & Coordinate Safety Tracking
@@ -240,6 +247,14 @@ def process_compliance_inspection(
     except Exception as rend_err:
         logger.warning(f"Visual evidence rendering encountered a non-fatal error: {rend_err}")
 
+    # 8. Generate Intelligent Recapture Guidance
+    compliance_result.guidance = generate_inspection_guidance(
+        quality_reports=[quality_report],
+        compliance_result=compliance_result,
+        is_complete_scan=is_complete_scan,
+        product_category=product_category,
+    )
+
     return compliance_result
 
 
@@ -324,24 +339,30 @@ def process_multi_view_compliance_from_bytes(
 
         if q_report.status == QualityStatus.rejected or not q_report.is_valid:
             recapture_info = q_report.recapture_reason or "Image quality rejected due to blur, lighting, or resolution."
+            fail_viol = Violation(
+                rule_code="QUALITY-REJECT",
+                violation_type=ViolationType.illegible,
+                severity=ViolationSeverity.major,
+                description=f"View {view_idx} ({fname}) quality insufficient for automated legal inspection: {recapture_info}",
+            )
+            fail_guidance = generate_inspection_guidance(
+                quality_reports=quality_reports,
+                violations=[fail_viol],
+                is_complete_scan=is_complete_scan,
+                product_category=product_category,
+            )
             fail_res = ComplianceResult(
                 verdict=ComplianceVerdict.NEEDS_REVIEW,
                 compliance_score=0.0,
                 declarations=[],
-                violations=[
-                    Violation(
-                        rule_code="QUALITY-REJECT",
-                        violation_type=ViolationType.illegible,
-                        severity=ViolationSeverity.major,
-                        description=f"View {view_idx} ({fname}) quality insufficient for automated legal inspection: {recapture_info}",
-                    )
-                ],
+                violations=[fail_viol],
                 evidence=EvidenceMetadata(
                     timestamp=datetime.now(timezone.utc).isoformat(),
                     rule_version=rule_engine.rules_version,
                     total_declarations_checked=0,
                     total_violations_found=1,
                 ),
+                guidance=fail_guidance,
             )
             return quality_reports, fail_res, decoded_images, []
 
@@ -501,6 +522,14 @@ def process_multi_view_compliance_from_bytes(
         rule_version=rule_engine.rules_version,
         total_declarations_checked=len(compliance_result.declarations),
         total_violations_found=len(compliance_result.violations),
+    )
+
+    # 5. Generate Intelligent Recapture Guidance across all views
+    compliance_result.guidance = generate_inspection_guidance(
+        quality_reports=quality_reports,
+        compliance_result=compliance_result,
+        is_complete_scan=is_complete_scan,
+        product_category=product_category,
     )
 
     return quality_reports, compliance_result, decoded_images, evidence_paths

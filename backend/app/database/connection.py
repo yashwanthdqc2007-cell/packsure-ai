@@ -169,6 +169,7 @@ class InMemoryScanRepository(BaseScanRepository):
             "evidence_image_url": None,
             "product_category": product_category,
             "reviewer_notes": None,
+            "guidance": None,
             "created_at": now_iso,
             "completed_at": None,
         }

@@ -14,6 +14,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from app.schemas.declaration import ExtractedDeclaration
+from app.schemas.guidance import InspectionGuidance
 from app.schemas.violation import Violation
 
 
@@ -73,4 +74,7 @@ class ComplianceResult(BaseModel):
     )
     evidence: Optional[EvidenceMetadata] = Field(
         default=None, description="Detailed evidence package metadata"
+    )
+    guidance: Optional[InspectionGuidance] = Field(
+        default=None, description="Intelligent recapture and field inspection guidance recommendations"
     )

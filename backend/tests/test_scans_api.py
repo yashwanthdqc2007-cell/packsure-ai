@@ -695,6 +695,43 @@ class TestScansAPIAndPersistence(unittest.TestCase):
             called_report_url = mock_save_report.call_args[1]["report_url"]
             self.assertTrue(called_report_url.endswith("report.json"))
 
+    # 26. get_scan returns populated InspectionGuidance when persisted
+    def test_get_scan_returns_inspection_guidance(self):
+        scan_id = "test-scan-guidance-26"
+        self.repo.create_scan(scan_id=scan_id)
+        self.repo.update_scan(
+            scan_id,
+            {
+                "status": "complete",
+                "verdict": ComplianceVerdict.NEEDS_REVIEW.value,
+                "compliance_score": 50.0,
+                "guidance": {
+                    "needs_recapture": True,
+                    "priority": "high",
+                    "headline": "Recapture Recommended — Glare Detected",
+                    "target_panels": ["back", "mrp_panel"],
+                    "issues": [
+                        {
+                            "code": "GLARE_DETECTED",
+                            "category": "quality",
+                            "title": "Excessive Glare",
+                            "description": "Harsh reflections detected",
+                            "suggested_action": "Tilt camera 15°–30°",
+                            "affected_fields": [],
+                        }
+                    ],
+                    "actionable_steps": ["Tilt camera 15°–30°"],
+                    "coverage_estimate_pct": 60.0,
+                },
+            },
+        )
+        res = get_scan(id=scan_id, repo=self.repo)
+        self.assertIsNotNone(res.guidance)
+        self.assertTrue(res.guidance.needs_recapture)
+        self.assertEqual(res.guidance.priority.value, "high")
+        self.assertEqual(len(res.guidance.issues), 1)
+        self.assertEqual(res.guidance.issues[0].code, "GLARE_DETECTED")
+        self.assertIn("Tilt", res.guidance.actionable_steps[0])
 
 
 if __name__ == "__main__":

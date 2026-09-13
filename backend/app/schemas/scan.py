@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.compliance import ComplianceVerdict
 from app.schemas.declaration import CorrectedDeclaration, ExtractedDeclaration
+from app.schemas.guidance import InspectionGuidance
 from app.schemas.violation import Violation
 
 
@@ -104,6 +105,9 @@ class ScanResponse(BaseModel):
     )
     reviewer_notes: Optional[str] = Field(
         default=None, description="Audit notes appended during manual human review"
+    )
+    guidance: Optional[InspectionGuidance] = Field(
+        default=None, description="Intelligent recapture and inspection guidance recommendations"
     )
     created_at: str = Field(..., description="ISO8601 creation timestamp")
     completed_at: Optional[str] = Field(

@@ -520,6 +520,111 @@ export const InspectionDetailsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Intelligent Recapture Guidance Card */}
+      {scan?.guidance && (scan.guidance.needs_recapture || scan.guidance.issues.length > 0) && (
+        <div
+          className={`p-5 rounded-xl border transition-all ${
+            scan.guidance.priority === 'critical'
+              ? 'bg-red-50/80 border-red-300 text-red-950'
+              : scan.guidance.priority === 'high'
+              ? 'bg-amber-50/80 border-amber-300 text-amber-950'
+              : scan.guidance.priority === 'medium'
+              ? 'bg-blue-50/80 border-blue-300 text-blue-950'
+              : 'bg-slate-50 border-slate-200 text-slate-800'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+            <div className="flex items-start gap-3.5 flex-1">
+              <div
+                className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                  scan.guidance.priority === 'critical'
+                    ? 'bg-red-100 text-red-700'
+                    : scan.guidance.priority === 'high'
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-blue-100 text-blue-700'
+                }`}
+              >
+                <Camera className="w-5 h-5" />
+              </div>
+              <div className="space-y-1.5 flex-1">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="font-bold text-sm tracking-tight">
+                    Intelligent Recapture Guidance
+                  </span>
+                  <span
+                    className={`text-[11px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                      scan.guidance.priority === 'critical'
+                        ? 'bg-red-200/70 text-red-800 border-red-300'
+                        : scan.guidance.priority === 'high'
+                        ? 'bg-amber-200/70 text-amber-800 border-amber-300'
+                        : scan.guidance.priority === 'medium'
+                        ? 'bg-blue-200/70 text-blue-800 border-blue-300'
+                        : 'bg-slate-200 text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    {scan.guidance.priority} Priority
+                  </span>
+                  {scan.guidance.coverage_estimate_pct !== undefined && scan.guidance.coverage_estimate_pct !== null && (
+                    <span className="text-[11px] font-medium text-slate-600 bg-white/70 px-2 py-0.5 rounded border border-slate-200">
+                      ~{scan.guidance.coverage_estimate_pct}% Evidence Coverage
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs font-semibold text-slate-700">
+                  {scan.guidance.headline}
+                </p>
+
+                {/* Target Panels Badges */}
+                {scan.guidance.target_panels && scan.guidance.target_panels.length > 0 && (
+                  <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                    <span className="text-[11px] font-medium text-slate-500">Recommended Panels:</span>
+                    {scan.guidance.target_panels.map((p) => (
+                      <span
+                        key={p}
+                        className="text-[11px] font-semibold bg-white px-2 py-0.5 rounded shadow-2xs border border-slate-200 text-slate-800 capitalize flex items-center gap-1"
+                      >
+                        <Layers className="w-3 h-3 text-brand-blue" />
+                        {p.replace('_', ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Actionable Steps Checklist */}
+                {scan.guidance.actionable_steps && scan.guidance.actionable_steps.length > 0 && (
+                  <div className="mt-3 space-y-1.5 bg-white/80 rounded-lg p-3 border border-slate-200/70">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      Recommended Field Actions (Max 3):
+                    </p>
+                    <ul className="space-y-1.5 text-xs text-slate-700">
+                      {scan.guidance.actionable_steps.map((step, sIdx) => (
+                        <li key={sIdx} className="flex items-start gap-2">
+                          <span className="w-4 h-4 rounded-full bg-brand-blue/10 text-brand-blue font-bold text-[10px] flex items-center justify-center flex-shrink-0 mt-0.5">
+                            {sIdx + 1}
+                          </span>
+                          <span className="leading-snug">{step}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Recapture Action Button */}
+            <div className="flex sm:flex-col gap-2 flex-shrink-0 self-start sm:self-center">
+              <Link
+                to={`/new-inspection?category=${encodeURIComponent(scan.product_category || '')}`}
+              >
+                <Button size="sm" icon={<Camera className="w-4 h-4" />}>
+                  Recapture with Guidance
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 4. Top Metrics Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Compliance Score */}

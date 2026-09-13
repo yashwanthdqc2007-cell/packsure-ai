@@ -19,6 +19,7 @@ Invariants:
 - Output is structured tuple: (is_valid, error_message, violation_type).
 """
 
+from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import NamedTuple, Optional, Tuple
@@ -47,9 +48,22 @@ CURRENCY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Date patterns (MM/YYYY, DD/MM/YYYY, Month YYYY, YYYY-MM)
+# Date patterns supporting 2-digit and 4-digit years per Legal Metrology Rule 6(1)(d) & FSSAI Reg 5(3)/5(10)
+# Matches:
+# - DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD/MM/YY, DD-MM-YY, DD.MM.YY
+# - MM/YYYY, MM-YYYY, MM.YYYY, MM/YY, MM-YY, MM.YY
+# - Month YYYY, Month YY (e.g. 'Jan 2026', 'Sep 26', 'September 2026')
+# - YYYY-MM, YYYY/MM, YYYY-MM-DD
 DATE_PATTERN = re.compile(
-    r"(?:\b(\d{1,2})[/\-\.](\d{4})\b|\b(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,\.\-]+(\d{4})\b|\b(\d{4})[/\-](\d{1,2})\b)",
+    r"(?:"
+    r"\b([0-3]?\d)[/\-\.]([0-1]?\d)[/\-\.](\d{4}|\d{2})\b"  # 3-part: DD/MM/YY or DD/MM/YYYY
+    r"|"
+    r"\b([0-1]?\d)[/\-\.](\d{4}|\d{2})\b"                  # 2-part: MM/YYYY or MM/YY
+    r"|"
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,\.\-]+(\d{4}|\d{2})\b"  # Month YYYY/YY
+    r"|"
+    r"\b(\d{4})[/\-]([0-1]?\d)(?:[/\-]([0-3]?\d))?\b"     # ISO: YYYY-MM or YYYY-MM-DD
+    r")",
     re.IGNORECASE,
 )
 
@@ -182,6 +196,87 @@ def validate_net_quantity(
     return ValidationResult(is_valid=True)
 
 
+def normalize_2digit_year(yy: int) -> int:
+    """Normalize 2-digit year to 4-digit century (00-99 -> 2000-2099)."""
+    return 2000 + yy if yy < 100 else yy
+
+
+def _is_valid_date_format(text: str) -> bool:
+    """Validate whether text contains a legitimate, real calendar date expression per FSSAI / Legal Metrology rules.
+
+    Performs:
+    1. Syntactic extraction matching authorized date-marking structures:
+       - 3-part: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD/MM/YY, DD-MM-YY, DD.MM.YY
+       - 2-part: MM/YYYY, MM-YYYY, MM.YYYY, MM/YY, MM-YY, MM.YY
+       - Month name: Month YYYY, Month YY (e.g. 'Jan 2026', 'Sep 26', 'September 2026')
+       - ISO format: YYYY-MM, YYYY-MM-DD, YYYY/MM/DD
+    2. True calendar date validation using datetime.date:
+       - Rejects impossible calendar dates (e.g. 31/02/26, 31/04/26, 29/02/25).
+       - Validates leap years (e.g. 29/02/24 passes, 29/02/25 fails).
+    """
+    if not text or not text.strip():
+        return False
+
+    for match in DATE_PATTERN.finditer(text):
+        groups = match.groups()
+        # Group 1, 2, 3: 3-part (d, m, y)
+        d_str, m_str, y_str = groups[0], groups[1], groups[2]
+        if d_str is not None and m_str is not None and y_str is not None:
+            try:
+                d = int(d_str)
+                m = int(m_str)
+                raw_y = int(y_str)
+                y = normalize_2digit_year(raw_y) if len(y_str) == 2 else raw_y
+                if 1900 <= y <= 2099:
+                    date(y, m, d)  # Validates actual calendar existence (leap years, month days)
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # Group 4, 5: 2-part (m, y)
+        m2_str, y2_str = groups[3], groups[4]
+        if m2_str is not None and y2_str is not None:
+            try:
+                m2 = int(m2_str)
+                raw_y2 = int(y2_str)
+                y2 = normalize_2digit_year(raw_y2) if len(y2_str) == 2 else raw_y2
+                if 1 <= m2 <= 12 and 1900 <= y2 <= 2099:
+                    date(y2, m2, 1)
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # Group 6: Named month year
+        y3_str = groups[5]
+        if y3_str is not None:
+            try:
+                raw_y3 = int(y3_str)
+                y3 = normalize_2digit_year(raw_y3) if len(y3_str) == 2 else raw_y3
+                if 1900 <= y3 <= 2099:
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # Group 7, 8, 9: ISO (y, m, optional d)
+        y4_str, m4_str, d4_str = groups[6], groups[7], groups[8]
+        if y4_str is not None and m4_str is not None:
+            try:
+                y4 = int(y4_str)
+                m4 = int(m4_str)
+                if 1900 <= y4 <= 2099:
+                    if d4_str is not None:
+                        d4 = int(d4_str)
+                        date(y4, m4, d4)
+                        return True
+                    else:
+                        date(y4, m4, 1)
+                        return True
+            except (ValueError, TypeError):
+                pass
+
+    return False
+
+
 # =====================================================================
 # 5. Manufacture / Packing Date Validator (Rule 6(1)(d))
 # =====================================================================
@@ -200,10 +295,10 @@ def validate_manufacture_date(
             violation_type=ViolationType.missing_declaration,
         )
 
-    if not DATE_PATTERN.search(text_to_check):
+    if not _is_valid_date_format(text_to_check):
         return ValidationResult(
             is_valid=False,
-            error_message=f"Manufacture date '{value}' is not in a valid MM/YYYY, DD/MM/YYYY, or Month YYYY format.",
+            error_message=f"Manufacture date '{value}' is not in a valid MM/YYYY, DD/MM/YYYY, MM/YY, DD/MM/YY, or Month YYYY format.",
             violation_type=ViolationType.invalid_format,
         )
 
@@ -642,7 +737,7 @@ def validate_expiry_date(
             violation_type=ViolationType.missing_declaration,
         )
 
-    if not DATE_PATTERN.search(expiry_val):
+    if not _is_valid_date_format(expiry_val):
         return ValidationResult(
             is_valid=False,
             error_message=f"Expiry date '{expiry_val}' is not in a valid date format.",

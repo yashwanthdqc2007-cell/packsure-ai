@@ -40,8 +40,9 @@ MAX_FILE_SIZE_BYTES: int = 20 * 1024 * 1024  # 20 MiB limit per docs/api.md
 SUPPORTED_IMAGE_TYPES: Tuple[str, ...] = ("image/jpeg", "image/png", "image/webp")
 
 # Resolution Baselines (Pixel Dimensions)
-MIN_WIDTH_PIXELS: int = 600
-MIN_HEIGHT_PIXELS: int = 600
+MIN_SHORTEST_DIMENSION_PIXELS: int = 600
+MIN_WIDTH_PIXELS: int = 600  # Backward-compatible alias
+MIN_HEIGHT_PIXELS: int = 600  # Backward-compatible alias
 MIN_TOTAL_PIXELS: int = 360000
 
 # Focus / Blur Baselines (Laplacian Variance Score)
@@ -209,12 +210,12 @@ def check_image_quality(image: np.ndarray) -> ImageQualityReport:
         raise ValueError(f"Invalid image dimensions: {width}x{height}")
 
     total_pixels = width * height
+    shortest_dim = min(width, height)
     gray = _to_grayscale(image)
 
-    # 1. Resolution
+    # 1. Resolution (Shortest dimension >= 600px AND Total Pixels >= 360,000)
     resolution_acceptable = bool(
-        width >= MIN_WIDTH_PIXELS
-        and height >= MIN_HEIGHT_PIXELS
+        shortest_dim >= MIN_SHORTEST_DIMENSION_PIXELS
         and total_pixels >= MIN_TOTAL_PIXELS
     )
 
@@ -263,7 +264,8 @@ def check_image_quality(image: np.ndarray) -> ImageQualityReport:
     reasons = []
     if not resolution_acceptable:
         reasons.append(
-            f"Image resolution ({width}x{height}) is too low; minimum {MIN_WIDTH_PIXELS}x{MIN_HEIGHT_PIXELS} px required."
+            f"Image resolution ({width}x{height}, shortest dimension {shortest_dim}px) is too low; "
+            f"minimum {MIN_SHORTEST_DIMENSION_PIXELS}px shortest dimension and {MIN_TOTAL_PIXELS:,} total pixels required."
         )
     if blur_rejected:
         reasons.append("Image is severely blurry; please hold the camera steady and tap to focus.")

@@ -166,7 +166,7 @@ def generate_inspection_guidance(
                     code="LOW_RESOLUTION",
                     category=GuidanceIssueCategory.quality,
                     title=f"Low Resolution ({view_label})",
-                    description=f"{view_label} resolution is below the minimum required 600x600 px.",
+                    description=f"{view_label} resolution is below the minimum required 600px shortest dimension and 360,000 total pixels.",
                     suggested_action="Move the camera closer to fill the frame with the package label, or use a higher camera resolution.",
                     target_panel=GuidanceTargetPanel.generic,
                     affected_view_index=view_idx if len(quality_reports) > 1 else None,

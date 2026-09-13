@@ -395,14 +395,71 @@ class TestDatesAndExpiryValidator(unittest.TestCase):
     """Tests for Rule 6(1)(d) manufacture date and Rule 6(1)(m) expiry date."""
 
     def test_valid_manufacture_dates(self):
+        # Existing 4-digit formats
         self.assertTrue(validate_manufacture_date("01/2026").is_valid)
         self.assertTrue(validate_manufacture_date("15/02/2026").is_valid)
+        self.assertTrue(validate_manufacture_date("15-02-2026").is_valid)
+        self.assertTrue(validate_manufacture_date("15.02.2026").is_valid)
         self.assertTrue(validate_manufacture_date("Jan 2026").is_valid)
+        self.assertTrue(validate_manufacture_date("September 2026").is_valid)
+
+        # 2-digit year formats per FSSAI / Legal Metrology
+        self.assertTrue(validate_manufacture_date("08/09/26").is_valid)
+        self.assertTrue(validate_manufacture_date("08-09-26").is_valid)
+        self.assertTrue(validate_manufacture_date("08.09.26").is_valid)
+        self.assertTrue(validate_manufacture_date("09/26").is_valid)
+        self.assertTrue(validate_manufacture_date("09-26").is_valid)
+        self.assertTrue(validate_manufacture_date("09.26").is_valid)
+        self.assertTrue(validate_manufacture_date("Sep 26").is_valid)
+        self.assertTrue(validate_manufacture_date("MFD: 08/09/26").is_valid)
+
+    def test_valid_expiry_dates_2digit_and_4digit(self):
+        # 2-digit year formats for UBD / Expiry
+        self.assertTrue(validate_expiry_date("08/09/26", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("08-09-26", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("08.09.26", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("09/26", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("UBD: 08/09/26", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("Best Before 08/09/26", is_perishable=True).is_valid)
+
+        # 4-digit year formats
+        self.assertTrue(validate_expiry_date("08/09/2026", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("08-09-2026", is_perishable=True).is_valid)
+        self.assertTrue(validate_expiry_date("08.09.2026", is_perishable=True).is_valid)
+
+    def test_calendar_validity_and_leap_years(self):
+        """Calendar date validation rejects impossible dates and enforces leap-year rules."""
+        # Valid leap year date
+        self.assertTrue(validate_manufacture_date("29/02/24").is_valid)
+        self.assertTrue(validate_manufacture_date("29/02/2024").is_valid)
+        self.assertTrue(validate_expiry_date("29/02/24", is_perishable=True).is_valid)
+
+        # Invalid non-leap year date (Feb 29 on non-leap year)
+        self.assertFalse(validate_manufacture_date("29/02/25").is_valid)
+        self.assertFalse(validate_manufacture_date("29/02/2025").is_valid)
+        self.assertFalse(validate_expiry_date("29/02/25", is_perishable=True).is_valid)
+
+        # Impossible calendar dates (Feb 31, April 31)
+        self.assertFalse(validate_manufacture_date("31/02/26").is_valid)
+        self.assertFalse(validate_manufacture_date("31/02/2026").is_valid)
+        self.assertFalse(validate_manufacture_date("31/04/26").is_valid)
+        self.assertFalse(validate_manufacture_date("31/04/2026").is_valid)
+        self.assertFalse(validate_expiry_date("31/02/26", is_perishable=True).is_valid)
+        self.assertFalse(validate_expiry_date("31/04/26", is_perishable=True).is_valid)
 
     def test_invalid_manufacture_date(self):
+        # Malformed / unparseable
         res = validate_manufacture_date("Not a date")
         self.assertFalse(res.is_valid)
         self.assertEqual(res.violation_type, ViolationType.invalid_format)
+
+        # Out-of-bounds dates
+        self.assertFalse(validate_manufacture_date("99/99/99").is_valid)
+        self.assertFalse(validate_manufacture_date("00/00/00").is_valid)
+        self.assertFalse(validate_manufacture_date("32/01/26").is_valid)
+        self.assertFalse(validate_manufacture_date("15/13/26").is_valid)
+        self.assertFalse(validate_manufacture_date("08/13/2026").is_valid)
+        self.assertFalse(validate_manufacture_date("123/45/6789").is_valid)
 
     def test_perishable_missing_expiry_fails(self):
         res = validate_expiry_date(None, is_perishable=True)

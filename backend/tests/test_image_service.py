@@ -150,7 +150,7 @@ class TestImageQualityAssessment(unittest.TestCase):
             check_image_quality(np.array([]))
 
     def test_resolution_failure_rejected(self):
-        # Small image (300x300 < 600x600)
+        # Small image (300x300 < 600x600, 90,000 pixels)
         small_img = _create_synthetic_sharp_image(width=300, height=300)
         report = check_image_quality(small_img)
 
@@ -159,6 +159,44 @@ class TestImageQualityAssessment(unittest.TestCase):
         self.assertFalse(report.metrics.resolution_acceptable)
         self.assertIsNotNone(report.recapture_reason)
         self.assertIn("resolution", report.recapture_reason.lower())
+
+    def test_resolution_shortest_dimension_and_total_pixels(self):
+        """Shortest dimension >= 600px AND total pixels >= 360,000 rule."""
+        # 600x900 -> Valid candidate (shortest 600 >= 600, pixels 540,000 >= 360,000)
+        img_600x900 = _create_synthetic_sharp_image(width=600, height=900)
+        rep_600x900 = check_image_quality(img_600x900)
+        self.assertTrue(rep_600x900.metrics.resolution_acceptable)
+        self.assertTrue(rep_600x900.is_valid)
+
+        # 900x600 -> Valid candidate (shortest 600 >= 600, pixels 540,000 >= 360,000)
+        img_900x600 = _create_synthetic_sharp_image(width=900, height=600)
+        rep_900x600 = check_image_quality(img_900x600)
+        self.assertTrue(rep_900x600.metrics.resolution_acceptable)
+        self.assertTrue(rep_900x600.is_valid)
+
+        # 600x1200 -> Valid candidate (shortest 600 >= 600, pixels 720,000 >= 360,000)
+        img_600x1200 = _create_synthetic_sharp_image(width=600, height=1200)
+        rep_600x1200 = check_image_quality(img_600x1200)
+        self.assertTrue(rep_600x1200.metrics.resolution_acceptable)
+        self.assertTrue(rep_600x1200.is_valid)
+
+        # 500x900 -> Rejected (shortest 500 < 600)
+        img_500x900 = _create_synthetic_sharp_image(width=500, height=900)
+        rep_500x900 = check_image_quality(img_500x900)
+        self.assertFalse(rep_500x900.metrics.resolution_acceptable)
+        self.assertEqual(rep_500x900.status, QualityStatus.rejected)
+
+        # 500x700 -> Rejected (shortest 500 < 600)
+        img_500x700 = _create_synthetic_sharp_image(width=500, height=700)
+        rep_500x700 = check_image_quality(img_500x700)
+        self.assertFalse(rep_500x700.metrics.resolution_acceptable)
+        self.assertEqual(rep_500x700.status, QualityStatus.rejected)
+
+        # 600x500 -> Rejected (total pixels 300,000 < 360,000 and shortest 500 < 600)
+        img_600x500 = _create_synthetic_sharp_image(width=600, height=500)
+        rep_600x500 = check_image_quality(img_600x500)
+        self.assertFalse(rep_600x500.metrics.resolution_acceptable)
+        self.assertEqual(rep_600x500.status, QualityStatus.rejected)
 
     def test_severe_blur_rejected(self):
         # Smooth image with minimal Laplacian variance

@@ -15,6 +15,7 @@ Verifies:
 11. Category breakdown mapping and category stats.
 """
 
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import MagicMock
 
@@ -74,8 +75,11 @@ class TestAnalyticsAPI(unittest.TestCase):
 
     def test_default_period_7d(self):
         """Default period is '7d' and filters scans within the last 7 days."""
-        self._seed_scan("s-now", "Edible Oil", "PASS", "2026-09-06T10:00:00Z")
-        self._seed_scan("s-old", "Edible Oil", "PASS", "2026-08-01T10:00:00Z")
+        now = datetime.now(timezone.utc)
+        recent_ts = (now - timedelta(days=2)).isoformat()
+        old_ts = (now - timedelta(days=20)).isoformat()
+        self._seed_scan("s-now", "Edible Oil", "PASS", recent_ts)
+        self._seed_scan("s-old", "Edible Oil", "PASS", old_ts)
 
         resp: AnalyticsResponse = get_analytics(repo=self.repo)
         self.assertEqual(resp.total_scans, 1)
@@ -83,9 +87,13 @@ class TestAnalyticsAPI(unittest.TestCase):
 
     def test_explicit_period_30d(self):
         """Explicit period '30d' includes scans within 30 days but excludes older."""
-        self._seed_scan("s-recent", "Edible Oil", "PASS", "2026-09-01T10:00:00Z")
-        self._seed_scan("s-20d-old", "Snacks", "FAIL", "2026-08-20T10:00:00Z")
-        self._seed_scan("s-60d-old", "Beverages", "PASS", "2026-07-01T10:00:00Z")
+        now = datetime.now(timezone.utc)
+        recent_ts = (now - timedelta(days=5)).isoformat()
+        mid_ts = (now - timedelta(days=20)).isoformat()
+        old_ts = (now - timedelta(days=60)).isoformat()
+        self._seed_scan("s-recent", "Edible Oil", "PASS", recent_ts)
+        self._seed_scan("s-20d-old", "Snacks", "FAIL", mid_ts)
+        self._seed_scan("s-60d-old", "Beverages", "PASS", old_ts)
 
         resp: AnalyticsResponse = get_analytics(period="30d", repo=self.repo)
         self.assertEqual(resp.total_scans, 2)

@@ -306,6 +306,18 @@ class RuleEngine:
                 val_result = validate_consumer_care(raw_v)
 
             if val_result and not val_result.is_valid:
+                # Evidence Coverage Semantics for Incomplete Scans:
+                # If the scan is incomplete (is_complete_scan=False) and MRP has a valid price amount
+                # but the mandatory tax wording ('inclusive of all taxes') was not observed on the captured panel,
+                # do NOT issue an immediate statutory FAIL. Instead route to NEEDS_REVIEW / uncertainty guidance.
+                if (
+                    not is_complete_scan
+                    and rule.validator_type == "mrp"
+                    and "inclusive of all taxes" in (val_result.error_message or "").lower()
+                ):
+                    has_uncertainty = True
+                    continue
+
                 violations.append(
                     Violation(
                         rule_code=rule.rule_code,

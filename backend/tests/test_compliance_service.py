@@ -189,14 +189,14 @@ class TestComplianceOrchestrator(unittest.TestCase):
     @patch("app.services.compliance_service.extract_declarations")
     @patch("app.services.compliance_service.extract_raw_ocr")
     def test_successful_end_to_end_deterministic_fail(self, mock_ocr, mock_ai):
-        """End-to-end flow with violating declaration yields FAIL verdict and critical violation."""
+        """End-to-end flow with violating declaration on complete scan yields FAIL verdict and critical violation."""
         mock_ocr.return_value = self.mock_ocr_result
         mock_ai.return_value = self.violating_declarations
 
         result = process_compliance_inspection(
             image=self.test_img,
             product_category="Food Grains",
-            is_complete_scan=False,
+            is_complete_scan=True,
         )
 
         self.assertIsInstance(result, ComplianceResult)
@@ -208,6 +208,23 @@ class TestComplianceOrchestrator(unittest.TestCase):
         self.assertIsNotNone(mrp_violation)
         self.assertEqual(mrp_violation.rule_code, "Rule-6(1)(e)")
         self.assertEqual(mrp_violation.severity, ViolationSeverity.critical)
+
+    @patch("app.services.compliance_service.extract_declarations")
+    @patch("app.services.compliance_service.extract_raw_ocr")
+    def test_incomplete_scan_missing_tax_clause_yields_needs_review(self, mock_ocr, mock_ai):
+        """Incomplete scan where MRP lacks tax clause routes to NEEDS_REVIEW instead of FAIL."""
+        mock_ocr.return_value = self.mock_ocr_result
+        mock_ai.return_value = self.violating_declarations
+
+        result = process_compliance_inspection(
+            image=self.test_img,
+            product_category="Food Grains",
+            is_complete_scan=False,
+        )
+
+        self.assertIsInstance(result, ComplianceResult)
+        self.assertEqual(result.verdict, ComplianceVerdict.NEEDS_REVIEW)
+        self.assertEqual(len(result.violations), 0)
 
     @patch("app.services.compliance_service.extract_declarations")
     @patch("app.services.compliance_service.extract_raw_ocr")

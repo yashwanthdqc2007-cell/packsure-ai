@@ -168,10 +168,75 @@ class TestComplianceEngine(unittest.TestCase):
         res = self.engine.evaluate_compliance(
             declarations=decls,
             product_category="Food Grains",
+            is_complete_scan=True,
         )
         self.assertEqual(res.verdict, ComplianceVerdict.FAIL)
         mrp_violation = next(v for v in res.violations if v.rule_code == "Rule-6(1)(e)")
         self.assertEqual(mrp_violation.violation_type, ViolationType.invalid_format)
+
+    def test_incomplete_scan_mrp_without_tax_wording_routes_to_needs_review(self):
+        """When is_complete_scan=False, MRP missing tax wording routes to NEEDS_REVIEW instead of FAIL."""
+        decls = []
+        for d in self.valid_food_declarations:
+            if d.field_name == "mrp":
+                decls.append(
+                    ExtractedDeclaration(
+                        field_name="mrp",
+                        status=DeclarationStatus.detected,
+                        raw_value="MRP: ₹28.00",  # Legible price but tax statement not on this panel
+                    )
+                )
+            elif d.field_name == "unit_sale_price":
+                decls.append(
+                    ExtractedDeclaration(
+                        field_name="unit_sale_price",
+                        status=DeclarationStatus.detected,
+                        raw_value="USP ₹ 0.06 / g",
+                    )
+                )
+            else:
+                decls.append(d)
+
+        res = self.engine.evaluate_compliance(
+            declarations=decls,
+            product_category="Packaged Food",
+            is_complete_scan=False,
+        )
+        self.assertEqual(res.verdict, ComplianceVerdict.NEEDS_REVIEW)
+        # Confirm no critical statutory violation was added
+        self.assertFalse(any(v.rule_code == "Rule-6(1)(e)" for v in res.violations))
+        # Confirm MRP is preserved in declarations
+        mrp_decl = next(d for d in res.declarations if d.field_name == "mrp")
+        self.assertEqual(mrp_decl.raw_value, "MRP: ₹28.00")
+
+    def test_incomplete_scan_mrp_with_tax_wording_passes(self):
+        """When is_complete_scan=False and tax wording is present, MRP passes cleanly."""
+        res = self.engine.evaluate_compliance(
+            declarations=self.valid_food_declarations,
+            product_category="Packaged Food",
+            is_complete_scan=False,
+        )
+        self.assertEqual(res.verdict, ComplianceVerdict.PASS)
+        self.assertEqual(len(res.violations), 0)
+
+    def test_incomplete_scan_unparseable_mrp_fails(self):
+        """When is_complete_scan=False but MRP contains no digits, invalid format is flagged."""
+        decls = [
+            d if d.field_name != "mrp" else ExtractedDeclaration(
+                field_name="mrp",
+                status=DeclarationStatus.detected,
+                raw_value="MRP: Not Applicable",
+            )
+            for d in self.valid_food_declarations
+            if d.field_name != "unit_sale_price"
+        ]
+        res = self.engine.evaluate_compliance(
+            declarations=decls,
+            product_category="Packaged Food",
+            is_complete_scan=False,
+        )
+        self.assertEqual(res.verdict, ComplianceVerdict.FAIL)
+        self.assertTrue(any(v.rule_code == "Rule-6(1)(e)" for v in res.violations))
 
     def test_uncertain_declaration_produces_needs_review(self):
         """Uncertain declaration (smudged text) must produce NEEDS_REVIEW rather than false FAIL."""

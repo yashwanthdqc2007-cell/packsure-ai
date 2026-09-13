@@ -179,17 +179,19 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
     # 4. Background worker transitions pending -> processing -> complete
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_background_worker_transitions_to_complete(self, mock_pipeline):
         mock_pipeline.return_value = (
-            ImageQualityReport(
-                is_valid=True, quality_score=0.9, status=QualityStatus.acceptable,
-                metrics=QualityMetrics(
-                    width=800, height=800, total_pixels=640000, resolution_acceptable=True,
-                    blur_score=200.0, is_blurry=False, brightness_score=120.0, is_too_dark=False,
-                    is_too_bright=False, contrast_score=50.0, is_low_contrast=False,
-                ),
-            ),
+            [
+                ImageQualityReport(
+                    is_valid=True, quality_score=0.9, status=QualityStatus.acceptable,
+                    metrics=QualityMetrics(
+                        width=800, height=800, total_pixels=640000, resolution_acceptable=True,
+                        blur_score=200.0, is_blurry=False, brightness_score=120.0, is_too_dark=False,
+                        is_too_bright=False, contrast_score=50.0, is_low_contrast=False,
+                    ),
+                )
+            ],
             ComplianceResult(
                 verdict=ComplianceVerdict.PASS,
                 compliance_score=100.0,
@@ -197,7 +199,8 @@ class TestScansAPIAndPersistence(unittest.TestCase):
                 violations=[],
                 evidence=EvidenceMetadata(rule_version="2026.1", annotated_image_path="storage/scans/s1/evidence.jpg"),
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            ["storage/scans/s1/evidence.jpg"],
         )
 
         scan_id = "test-scan-101"
@@ -219,10 +222,10 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertIsNotNone(scan["completed_at"])
 
     # 5. Completed ComplianceResult persisted correctly
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_completed_compliance_result_persisted_correctly(self, mock_pipeline):
         mock_pipeline.return_value = (
-            None,
+            [],
             ComplianceResult(
                 verdict=ComplianceVerdict.FAIL,
                 compliance_score=70.0,
@@ -230,7 +233,8 @@ class TestScansAPIAndPersistence(unittest.TestCase):
                 violations=[self.violation_item],
                 evidence=EvidenceMetadata(rule_version="2026.1"),
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            [],
         )
 
         scan_id = "test-scan-102"
@@ -268,10 +272,10 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(fetched[0].rule_code, "Rule-6(1)(e)")
 
     # 8. NEEDS_REVIEW persisted without converting to FAIL/PASS
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_needs_review_persisted_without_converting_to_fail_or_pass(self, mock_pipeline):
         mock_pipeline.return_value = (
-            None,
+            [],
             ComplianceResult(
                 verdict=ComplianceVerdict.NEEDS_REVIEW,
                 compliance_score=85.0,
@@ -279,7 +283,8 @@ class TestScansAPIAndPersistence(unittest.TestCase):
                 violations=[],
                 evidence=EvidenceMetadata(rule_version="2026.1"),
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            [],
         )
 
         scan_id = "test-scan-105"
@@ -299,7 +304,7 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(scan["verdict"], "NEEDS_REVIEW")
 
     # 9. Upstream pipeline failure never produces PASS
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_upstream_pipeline_failure_never_produces_pass(self, mock_pipeline):
         mock_pipeline.side_effect = RuntimeError("Fatal hardware crash")
 
@@ -415,10 +420,10 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(resp.declarations[0].confidence, 1.0)
 
     # 16. Retry replaces child rows without duplication
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_retry_replaces_child_rows_without_duplication(self, mock_pipeline):
         mock_pipeline.return_value = (
-            None,
+            [],
             ComplianceResult(
                 verdict=ComplianceVerdict.PASS,
                 compliance_score=100.0,
@@ -426,7 +431,8 @@ class TestScansAPIAndPersistence(unittest.TestCase):
                 violations=[],
                 evidence=EvidenceMetadata(rule_version="2026.1"),
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            [],
         )
 
         scan_id = "test-scan-112"
@@ -442,17 +448,18 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(len(self.repo.get_declarations(scan_id)), 1)
 
     # 17. Unsafe filename cannot escape UUID storage directory
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_unsafe_filename_cannot_escape_uuid_directory(self, mock_pipeline):
         mock_pipeline.return_value = (
-            None,
+            [],
             ComplianceResult(
                 verdict=ComplianceVerdict.PASS,
                 compliance_score=100.0,
                 declarations=[],
                 violations=[],
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            [],
         )
         scan_id = "test-scan-113"
         self.repo.create_scan(scan_id=scan_id)
@@ -487,17 +494,18 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertIsInstance(repo, BaseScanRepository)
 
     # 20. Original uploaded bytes are stored accurately without corruption
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_original_uploaded_bytes_stored_accurately(self, mock_pipeline):
         mock_pipeline.return_value = (
-            None,
+            [],
             ComplianceResult(
                 verdict=ComplianceVerdict.PASS,
                 compliance_score=100.0,
                 declarations=[],
                 violations=[],
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            [],
         )
         scan_id = "test-scan-114"
         self.repo.create_scan(scan_id=scan_id)
@@ -604,7 +612,7 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(response.violations[0].rule_code, "LMR-R06-1-M")
 
     # 24. process_scan_background generates report.json and calls repo.save_report with report.json
-    @patch("app.api.routes.scans.process_compliance_from_bytes")
+    @patch("app.api.routes.scans.process_multi_view_compliance_from_bytes")
     def test_process_scan_generates_json_report(self, mock_pipeline):
         scan_id = "test-scan-report-json-24"
         self.repo.create_scan(scan_id=scan_id)
@@ -615,7 +623,7 @@ class TestScansAPIAndPersistence(unittest.TestCase):
             total_violations_found=0,
         )
         mock_pipeline.return_value = (
-            None,
+            [],
             ComplianceResult(
                 verdict=ComplianceVerdict.PASS,
                 compliance_score=100.0,
@@ -631,7 +639,8 @@ class TestScansAPIAndPersistence(unittest.TestCase):
                 violations=[],
                 evidence=evidence_meta,
             ),
-            self.sharp_img,
+            [self.sharp_img],
+            [os.path.join("storage", "scans", scan_id, "evidence.jpg")],
         )
 
         with patch.object(self.repo, "save_report") as mock_save_report:
@@ -732,6 +741,86 @@ class TestScansAPIAndPersistence(unittest.TestCase):
         self.assertEqual(len(res.guidance.issues), 1)
         self.assertEqual(res.guidance.issues[0].code, "GLARE_DETECTED")
         self.assertIn("Tilt", res.guidance.actionable_steps[0])
+
+    # 27. Real unmocked integration test of process_scan_background with 1 real image view
+    def test_process_scan_background_single_view_real_integration(self):
+        """Verify process_scan_background with 1 real image executes pipeline through to status=complete without TypeError."""
+        try:
+            import cv2
+            _, encoded = cv2.imencode(".png", self.sharp_img)
+            real_png_bytes = encoded.tobytes()
+        except Exception:
+            from PIL import Image
+            buf = BytesIO()
+            Image.fromarray(self.sharp_img).save(buf, format="PNG")
+            real_png_bytes = buf.getvalue()
+
+        # Test A: via views=[PackageViewPayload]
+        from app.services.compliance_service import PackageViewPayload
+        view = PackageViewPayload(file_bytes=real_png_bytes, filename="single_real.png")
+
+        scan_id = "test-scan-single-real-27a"
+        self.repo.create_scan(scan_id=scan_id, product_category="Packaged Food")
+
+        mock_decls = [
+            ExtractedDeclaration(
+                field_name="mrp",
+                status=DeclarationStatus.detected,
+                raw_value="₹150.00",
+                normalized_value="150.00",
+                confidence=0.95,
+                source=DeclarationSource.gemini,
+            ),
+            ExtractedDeclaration(
+                field_name="generic_name",
+                status=DeclarationStatus.detected,
+                raw_value="Biscuits",
+                normalized_value="Biscuits",
+                confidence=0.98,
+                source=DeclarationSource.gemini,
+            ),
+        ]
+
+        with patch("app.services.compliance_service.extract_declarations", return_value=mock_decls):
+            process_scan_background(
+                scan_id=scan_id,
+                views=[view],
+                product_category="Packaged Food",
+                is_complete_scan=True,
+                repo=self.repo,
+            )
+
+        scan_a = self.repo.get_scan(scan_id)
+        self.assertIsNotNone(scan_a)
+        self.assertEqual(scan_a["status"], "complete")
+        self.assertIn(scan_a["verdict"], [ComplianceVerdict.PASS.value, ComplianceVerdict.FAIL.value, ComplianceVerdict.NEEDS_REVIEW.value])
+        self.assertIsNotNone(scan_a["compliance_score"])
+        self.assertIsNotNone(scan_a["guidance"])
+        decls_a = self.repo.get_declarations(scan_id)
+        self.assertGreaterEqual(len(decls_a), 2)
+
+        # Test B: via backward-compatible image_bytes/filename
+        scan_id_b = "test-scan-single-real-27b"
+        self.repo.create_scan(scan_id=scan_id_b, product_category="Packaged Food")
+
+        with patch("app.services.compliance_service.extract_declarations", return_value=mock_decls):
+            process_scan_background(
+                scan_id=scan_id_b,
+                image_bytes=real_png_bytes,
+                filename="single_legacy.png",
+                product_category="Packaged Food",
+                is_complete_scan=True,
+                repo=self.repo,
+            )
+
+        scan_b = self.repo.get_scan(scan_id_b)
+        self.assertIsNotNone(scan_b)
+        self.assertEqual(scan_b["status"], "complete")
+        self.assertIn(scan_b["verdict"], [ComplianceVerdict.PASS.value, ComplianceVerdict.FAIL.value, ComplianceVerdict.NEEDS_REVIEW.value])
+        self.assertIsNotNone(scan_b["compliance_score"])
+        self.assertIsNotNone(scan_b["guidance"])
+        decls_b = self.repo.get_declarations(scan_id_b)
+        self.assertGreaterEqual(len(decls_b), 2)
 
 
 if __name__ == "__main__":

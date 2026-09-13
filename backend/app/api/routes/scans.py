@@ -98,25 +98,13 @@ def process_scan_background(
             with open(primary_raw_path, "wb") as f:
                 f.write(views[0].file_bytes)
 
-        # 3. Execute Compliance Pipeline (Single-View vs Multi-View)
-        if len(views) <= 1:
-            raw_bytes = views[0].file_bytes if views else image_bytes
-            fname = views[0].filename if views else filename
-            q_report, compliance_result, decoded_img = process_compliance_from_bytes(
-                image_bytes=raw_bytes,
-                filename=fname,
-                product_category=product_category,
-                is_complete_scan=is_complete_scan,
-                output_dir=scan_dir,
-            )
-            evidence_paths = [compliance_result.evidence.annotated_image_path] if compliance_result.evidence and compliance_result.evidence.annotated_image_path else []
-        else:
-            q_reports, compliance_result, decoded_imgs, evidence_paths = process_multi_view_compliance_from_bytes(
-                views=views,
-                product_category=product_category,
-                is_complete_scan=is_complete_scan,
-                output_dir=scan_dir,
-            )
+        # 3. Execute Compliance Pipeline (Unified Collection of Views)
+        q_reports, compliance_result, decoded_imgs, evidence_paths = process_multi_view_compliance_from_bytes(
+            views=views,
+            product_category=product_category,
+            is_complete_scan=is_complete_scan,
+            output_dir=scan_dir,
+        )
 
         # 4. Idempotently Purge Any Existing Child Records (Retry Safety)
         repo.delete_child_records(scan_id)

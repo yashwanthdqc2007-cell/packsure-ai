@@ -396,7 +396,7 @@ export const HistoryPage: React.FC = () => {
                   <th scope="col" className="py-3 px-4">Category</th>
                   <th scope="col" className="py-3 px-4">Date & Time</th>
                   <th scope="col" className="py-3 px-4">Verdict</th>
-                  <th scope="col" className="py-3 px-4 text-center">Compliance Score</th>
+                  <th scope="col" className="py-3 px-4 text-center" title="Visual Label Compliance Score">Visual Score</th>
                   <th scope="col" className="py-3 px-4 text-center">Pipeline Status</th>
                   <th scope="col" className="py-3 px-5 text-right"><span className="sr-only">Actions</span></th>
                 </tr>

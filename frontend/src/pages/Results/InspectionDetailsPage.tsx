@@ -627,17 +627,17 @@ export const InspectionDetailsPage: React.FC = () => {
 
       {/* 4. Top Metrics Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Compliance Score */}
+        {/* Visual Label Compliance Score */}
         <Card className="border-slate-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Compliance Score</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Visual Label Compliance Score</p>
               <h3 className="text-2xl font-bold text-slate-900 mt-1">
                 {score !== null ? `${score.toFixed(1)}%` : '—'}
               </h3>
               <p className="text-[11px] text-slate-400 mt-1">
                 {verdict === 'PASS'
-                  ? 'All mandatory rules satisfied'
+                  ? 'All mandatory visual label rules satisfied'
                   : verdict === 'FAIL'
                   ? `${statutoryViolations.length} statutory violation(s)`
                   : qualityIssues.length > 0
@@ -904,6 +904,93 @@ export const InspectionDetailsPage: React.FC = () => {
                     <p className="text-blue-900 leading-relaxed font-normal">{scan.reviewer_notes}</p>
                   </div>
                 )}
+              </div>
+            </Card>
+
+            {/* Inspection Scope & Statutory Boundary */}
+            <Card
+              title="Inspection Scope"
+              subtitle="Statutory verification tiers and operational boundaries"
+            >
+              <div className="space-y-2.5">
+                {/* 1. Image Label Checks */}
+                <div className="p-2.5 bg-emerald-50/60 border border-emerald-200 rounded-lg flex items-start gap-2.5 text-xs">
+                  <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 mt-0.5 text-xs">
+                    🟢
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-emerald-950">Image Label Checks</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded uppercase">
+                        Evaluated
+                      </span>
+                    </div>
+                    <p className="text-emerald-900 text-[11px] mt-0.5">
+                      {scan?.scope_coverage?.image_verifiable_rules_checked?.length || 11} statutory visual declaration rules audited
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. Package Views */}
+                <div className="p-2.5 bg-emerald-50/60 border border-emerald-200 rounded-lg flex items-start gap-2.5 text-xs">
+                  <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 mt-0.5 text-xs">
+                    🟢
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-emerald-950">Package Views</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded uppercase">
+                        {evidenceImageUrls.length > 0 ? evidenceImageUrls.length : 1} view{evidenceImageUrls.length > 1 ? 's' : ''} captured
+                      </span>
+                    </div>
+                    <p className="text-emerald-900 text-[11px] mt-0.5">
+                      {scan?.is_complete_scan
+                        ? 'Complete multi-view panel coverage'
+                        : 'Partial view capture — unobserved panels not cited as violations'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 3. Physical Metrology */}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-start gap-2.5 text-xs">
+                  <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center flex-shrink-0 mt-0.5 text-xs">
+                    ⚪
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-800">Physical Metrology</span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded">
+                        Not Evaluated
+                      </span>
+                    </div>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Requires calibrated weighing/measurement (Net weight MPE Rules 14–18, Font mm Rule 8)
+                    </p>
+                  </div>
+                </div>
+
+                {/* 4. External Regulatory Verification */}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-start gap-2.5 text-xs">
+                  <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center flex-shrink-0 mt-0.5 text-xs">
+                    ⚪
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-800">External Regulatory Verification</span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded">
+                        Not Evaluated
+                      </span>
+                    </div>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Requires external registry/data source (DCA Director Rule 27 registration, FSSAI / EPR)
+                    </p>
+                  </div>
+                </div>
+
+                {/* Disclaimer note */}
+                <div className="pt-1 text-[10px] text-slate-400 italic leading-relaxed">
+                  Notice: Automated visual inspection evaluates visible declarations on captured images. It does not verify physical weight or external registrations and does not constitute statutory legal certification.
+                </div>
               </div>
             </Card>
 

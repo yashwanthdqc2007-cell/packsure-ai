@@ -119,6 +119,19 @@ export interface EvidenceMetadata {
   total_violations_found: number
 }
 
+/** Structured manifest declaring the exact statutory scope, automated visual coverage, and physical/external exclusions. */
+export interface ScopeCoverageManifest {
+  score_name?: string
+  score_meaning?: string
+  image_verifiable_rules_checked: string[]
+  views_captured_count: number
+  multi_view_status: string
+  is_complete_scan: boolean
+  physical_checks_excluded: string[]
+  external_data_checks_excluded: string[]
+  disclaimer: string
+}
+
 /** Consolidated outcome of the deterministic rules engine evaluation. */
 export interface ComplianceResult {
   verdict: ComplianceVerdict
@@ -128,6 +141,7 @@ export interface ComplianceResult {
   evidence_image_url?: string | null
   evidence?: EvidenceMetadata | null
   guidance?: InspectionGuidance | null
+  scope_coverage?: ScopeCoverageManifest | null
 }
 
 
@@ -198,6 +212,7 @@ export interface ScanResponse {
   violations: Violation[]
   reviewer_notes?: string | null
   guidance?: InspectionGuidance | null
+  scope_coverage?: ScopeCoverageManifest | null
   created_at: string
   completed_at?: string | null
 }

@@ -8,6 +8,7 @@ Implements Phase 7 scan lifecycle endpoints adhering to docs/api.md:
 """
 
 from datetime import datetime, timezone
+import json
 import logging
 import os
 from typing import Optional
@@ -26,7 +27,11 @@ from fastapi import (
 from app.api.dependencies import get_db_repository
 from app.core.config import settings
 from app.database.connection import BaseScanRepository
-from app.schemas.compliance import ComplianceVerdict
+from app.schemas.compliance import (
+    ComplianceVerdict,
+    ScopeCoverageManifest,
+    generate_scope_coverage_manifest,
+)
 from app.schemas.declaration import (
     DeclarationSource,
     DeclarationStatus,
@@ -122,6 +127,7 @@ def process_scan_background(
 
         primary_raw = raw_image_paths[0] if raw_image_paths else os.path.join(scan_dir, "original.jpg").replace("\\", "/")
         primary_evidence = evidence_paths[0].replace("\\", "/") if evidence_paths else None
+        normalized_ev_paths = [p.replace("\\", "/") for p in evidence_paths]
 
         try:
             report_json_path = os.path.join(scan_dir, "report.json")
@@ -132,13 +138,16 @@ def process_scan_background(
                 image_path=primary_raw,
                 evidence_path=primary_evidence,
                 output_path=report_json_path,
+                image_urls=raw_image_paths if raw_image_paths else ([primary_raw] if primary_raw else []),
+                evidence_image_urls=normalized_ev_paths if normalized_ev_paths else ([primary_evidence] if primary_evidence else []),
+                is_complete_scan=is_complete_scan,
+                guidance=compliance_result.guidance,
             )
             repo.save_report(scan_id, report_url=report_path, format_type="json")
         except Exception as report_err:
             logger.error(f"Failed to generate inspection report for {scan_id}: {report_err}", exc_info=True)
 
         # 6. Finalize Scan Record
-        normalized_ev_paths = [p.replace("\\", "/") for p in evidence_paths]
         repo.update_scan(
             scan_id,
             {
@@ -218,35 +227,44 @@ async def create_scan(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Failed to read image payload for view {idx}: {exc}",
-            ) from exc
+            )
 
-        fname = file.filename or f"upload_{idx}.jpg"
+        fname = file.filename or f"view_{idx}.jpg"
         is_valid, err_msg, _ = validate_image_file(content, filename=fname)
         if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=err_msg or f"Invalid image file format for {fname} or size exceeds 20MB limit.",
+                detail=f"Image validation failed for view {idx} ({fname}): {err_msg}",
             )
         view_payloads.append(PackageViewPayload(file_bytes=content, filename=fname))
 
-    # 3. Create Pending Scan Record
+    # 3. Create Pending Scan Record in Database
     scan_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
-    repo.create_scan(
-        scan_id=scan_id,
-        product_category=product_category,
-        user_id=user_id,
-        image_url=None,
-    )
+    try:
+        repo.create_scan(
+            scan_id=scan_id,
+            product_category=product_category,
+            user_id=user_id,
+            image_url=f"{LOCAL_STORAGE_BASE}/{scan_id}/original.jpg",
+        )
+    except Exception as exc:
+        logger.error(f"Database error creating scan {scan_id}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize scan record in database.",
+        )
 
-    # 4. Enqueue Background Processing Job
+    # 4. Enqueue Asynchronous Compliance Inspection Task
     background_tasks.add_task(
         process_scan_background,
         scan_id=scan_id,
-        views=view_payloads,
+        image_bytes=None,
+        filename=view_payloads[0].filename,
         product_category=product_category,
         user_id=user_id,
         is_complete_scan=is_complete_scan,
+        views=view_payloads,
         repo=repo,
     )
 
@@ -289,8 +307,28 @@ def get_scan(
 
     raw_img_urls = scan.get("image_urls")
     raw_ev_urls = scan.get("evidence_image_urls")
-
     raw_guidance = scan.get("guidance")
+    is_complete_scan_val = scan.get("is_complete_scan", False)
+
+    # Recover multi-view and guidance metadata from report.json artifact if not present directly in DB row
+    if not raw_guidance or not raw_img_urls or not raw_ev_urls:
+        report_json_path = os.path.join(LOCAL_STORAGE_BASE, id, "report.json")
+        if os.path.exists(report_json_path):
+            try:
+                with open(report_json_path, "r", encoding="utf-8") as rf:
+                    report_data = json.load(rf)
+                    if not raw_guidance and "guidance" in report_data:
+                        raw_guidance = report_data.get("guidance")
+                    artifacts = report_data.get("evidence_artifacts", {})
+                    if not raw_img_urls and "image_urls" in artifacts:
+                        raw_img_urls = artifacts.get("image_urls")
+                    if not raw_ev_urls and "evidence_image_urls" in artifacts:
+                        raw_ev_urls = artifacts.get("evidence_image_urls")
+                    if not is_complete_scan_val and "is_complete_scan" in artifacts:
+                        is_complete_scan_val = artifacts.get("is_complete_scan", False)
+            except Exception as e:
+                logger.debug(f"Could not load metadata from report artifact for {id}: {e}")
+
     guidance_obj = None
     if raw_guidance:
         if isinstance(raw_guidance, dict):
@@ -300,6 +338,25 @@ def get_scan(
                 guidance_obj = None
         elif isinstance(raw_guidance, InspectionGuidance):
             guidance_obj = raw_guidance
+
+    # Construct deterministic ScopeCoverageManifest
+    scope_manifest_obj = None
+    report_json_path = os.path.join(LOCAL_STORAGE_BASE, id, "report.json")
+    if os.path.exists(report_json_path):
+        try:
+            with open(report_json_path, "r", encoding="utf-8") as rf:
+                report_data = json.load(rf)
+                if "scope_coverage" in report_data:
+                    scope_manifest_obj = ScopeCoverageManifest.model_validate(report_data["scope_coverage"])
+        except Exception as e:
+            logger.debug(f"Could not load scope_coverage from report artifact for {id}: {e}")
+
+    if scope_manifest_obj is None:
+        views_cnt = len(raw_img_urls) if raw_img_urls else (1 if scan.get("image_url") else 1)
+        scope_manifest_obj = generate_scope_coverage_manifest(
+            views_captured_count=views_cnt,
+            is_complete_scan=is_complete_scan_val,
+        )
 
     return ScanResponse(
         scan_id=scan["id"],
@@ -312,11 +369,12 @@ def get_scan(
         processed_image_url=scan.get("processed_image_url"),
         evidence_image_url=scan.get("evidence_image_url"),
         evidence_image_urls=raw_ev_urls if raw_ev_urls else ([scan.get("evidence_image_url")] if scan.get("evidence_image_url") else None),
-        is_complete_scan=scan.get("is_complete_scan", False),
+        is_complete_scan=is_complete_scan_val,
         declarations=declarations,
         violations=violations,
         reviewer_notes=scan.get("reviewer_notes"),
         guidance=guidance_obj,
+        scope_coverage=scope_manifest_obj,
         created_at=scan.get("created_at", datetime.now(timezone.utc).isoformat()),
         completed_at=scan.get("completed_at"),
     )

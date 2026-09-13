@@ -114,6 +114,7 @@ class TestReportService(unittest.TestCase):
             "violations",
             "evidence_artifacts",
             "reviewer_audit",
+            "scope_coverage",
         }
         self.assertEqual(set(report.keys()), expected_top_keys)
 

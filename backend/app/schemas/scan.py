@@ -18,7 +18,7 @@ from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-from app.schemas.compliance import ComplianceVerdict
+from app.schemas.compliance import ComplianceVerdict, ScopeCoverageManifest
 from app.schemas.declaration import CorrectedDeclaration, ExtractedDeclaration
 from app.schemas.guidance import InspectionGuidance
 from app.schemas.violation import Violation
@@ -108,6 +108,9 @@ class ScanResponse(BaseModel):
     )
     guidance: Optional[InspectionGuidance] = Field(
         default=None, description="Intelligent recapture and inspection guidance recommendations"
+    )
+    scope_coverage: Optional[ScopeCoverageManifest] = Field(
+        default=None, description="Explicit statutory inspection scope, visual coverage, and physical/external exclusions"
     )
     created_at: str = Field(..., description="ISO8601 creation timestamp")
     completed_at: Optional[str] = Field(

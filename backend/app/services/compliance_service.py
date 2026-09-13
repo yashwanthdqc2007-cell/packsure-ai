@@ -32,6 +32,7 @@ from app.schemas.compliance import (
     ComplianceResult,
     ComplianceVerdict,
     EvidenceMetadata,
+    generate_scope_coverage_manifest,
 )
 from app.schemas.declaration import ExtractedDeclaration
 from app.schemas.image import ImageQualityReport, QualityStatus
@@ -253,6 +254,12 @@ def process_compliance_inspection(
         compliance_result=compliance_result,
         is_complete_scan=is_complete_scan,
         product_category=product_category,
+    )
+
+    # 9. Generate Deterministic Scope Coverage Manifest
+    compliance_result.scope_coverage = generate_scope_coverage_manifest(
+        views_captured_count=1,
+        is_complete_scan=is_complete_scan,
     )
 
     return compliance_result
@@ -530,6 +537,12 @@ def process_multi_view_compliance_from_bytes(
         compliance_result=compliance_result,
         is_complete_scan=is_complete_scan,
         product_category=product_category,
+    )
+
+    # 6. Generate Deterministic Scope Coverage Manifest across all views
+    compliance_result.scope_coverage = generate_scope_coverage_manifest(
+        views_captured_count=len(views),
+        is_complete_scan=is_complete_scan,
     )
 
     return quality_reports, compliance_result, decoded_images, evidence_paths

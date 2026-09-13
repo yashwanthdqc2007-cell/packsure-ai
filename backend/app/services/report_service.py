@@ -11,7 +11,12 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
-from app.schemas.compliance import ComplianceResult, ComplianceVerdict
+from app.schemas.compliance import (
+    ComplianceResult,
+    ComplianceVerdict,
+    ScopeCoverageManifest,
+    generate_scope_coverage_manifest,
+)
 from app.schemas.declaration import ExtractedDeclaration
 from app.schemas.violation import Violation
 
@@ -46,6 +51,11 @@ def compile_report_dict(
     status: str = "complete",
     reviewer_notes: Optional[str] = None,
     compliance_result: Optional[ComplianceResult] = None,
+    image_urls: Optional[List[str]] = None,
+    evidence_image_urls: Optional[List[str]] = None,
+    is_complete_scan: Optional[bool] = None,
+    guidance: Optional[Any] = None,
+    scope_coverage: Optional[Union[ScopeCoverageManifest, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Compile structured inspection report dictionary from scan domain models.
 
@@ -63,6 +73,11 @@ def compile_report_dict(
         status: Scan lifecycle status string.
         reviewer_notes: Human reviewer notes if reviewed.
         compliance_result: Optional ComplianceResult object to populate fields.
+        image_urls: Optional list of all raw image paths for multi-view scans.
+        evidence_image_urls: Optional list of all annotated evidence image paths.
+        is_complete_scan: Flag indicating complete panel coverage.
+        guidance: Optional InspectionGuidance object or dictionary.
+        scope_coverage: Optional ScopeCoverageManifest or dictionary.
 
     Returns:
         Structured dictionary matching the canonical inspection report schema.
@@ -82,6 +97,17 @@ def compile_report_dict(
                 compliance_result.evidence.annotated_image_path
                 or compliance_result.evidence.evidence_image_url
             )
+        if guidance is None and hasattr(compliance_result, "guidance") and compliance_result.guidance:
+            guidance = compliance_result.guidance
+        if scope_coverage is None and hasattr(compliance_result, "scope_coverage") and compliance_result.scope_coverage:
+            scope_coverage = compliance_result.scope_coverage
+
+    if scope_coverage is None:
+        views_count = len(image_urls) if image_urls else (1 if image_path else 1)
+        scope_coverage = generate_scope_coverage_manifest(
+            views_captured_count=views_count,
+            is_complete_scan=bool(is_complete_scan),
+        )
 
     decls_list: List[ExtractedDeclaration] = declarations or []
     viols_list: List[Violation] = violations or []
@@ -140,6 +166,22 @@ def compile_report_dict(
             }
         )
 
+    # Serialize guidance
+    serialized_guidance: Optional[Dict[str, Any]] = None
+    if guidance is not None:
+        if hasattr(guidance, "model_dump"):
+            serialized_guidance = guidance.model_dump()
+        elif isinstance(guidance, dict):
+            serialized_guidance = guidance
+
+    # Serialize scope_coverage
+    serialized_scope_coverage: Optional[Dict[str, Any]] = None
+    if scope_coverage is not None:
+        if hasattr(scope_coverage, "model_dump"):
+            serialized_scope_coverage = scope_coverage.model_dump()
+        elif isinstance(scope_coverage, dict):
+            serialized_scope_coverage = scope_coverage
+
     product_name = _extract_product_name(decls_list)
 
     report_dict: Dict[str, Any] = {
@@ -167,6 +209,8 @@ def compile_report_dict(
         "compliance_summary": {
             "verdict": verdict_str,
             "compliance_score": round(float(compliance_score), 2) if compliance_score is not None else None,
+            "score_name": "Visual Label Compliance Score",
+            "score_definition": "Evaluates visible declarations on captured package views only under LMR 2011",
             "total_declarations_evaluated": len(decls_list),
             "total_violations_found": len(viols_list),
         },
@@ -175,12 +219,21 @@ def compile_report_dict(
         "evidence_artifacts": {
             "original_image_path": image_path,
             "evidence_image_path": evidence_path,
+            "image_urls": image_urls or ([image_path] if image_path else []),
+            "evidence_image_urls": evidence_image_urls or ([evidence_path] if evidence_path else []),
+            "is_complete_scan": is_complete_scan if is_complete_scan is not None else False,
         },
         "reviewer_audit": {
             "is_reviewed": reviewer_notes is not None,
             "reviewer_notes": reviewer_notes,
         },
     }
+
+    if serialized_guidance is not None:
+        report_dict["guidance"] = serialized_guidance
+
+    if serialized_scope_coverage is not None:
+        report_dict["scope_coverage"] = serialized_scope_coverage
 
     return report_dict
 
@@ -200,6 +253,11 @@ def generate_json_report(
     status: str = "complete",
     reviewer_notes: Optional[str] = None,
     compliance_result: Optional[ComplianceResult] = None,
+    image_urls: Optional[List[str]] = None,
+    evidence_image_urls: Optional[List[str]] = None,
+    is_complete_scan: Optional[bool] = None,
+    guidance: Optional[Any] = None,
+    scope_coverage: Optional[Union[ScopeCoverageManifest, Dict[str, Any]]] = None,
 ) -> str:
     """Generate and serialize a structured JSON inspection report to disk.
 
@@ -218,6 +276,11 @@ def generate_json_report(
         status: Lifecycle status.
         reviewer_notes: Human reviewer notes.
         compliance_result: Optional ComplianceResult object.
+        image_urls: Optional list of raw image paths for multi-view scans.
+        evidence_image_urls: Optional list of annotated evidence paths.
+        is_complete_scan: Complete scan flag.
+        guidance: Optional InspectionGuidance.
+        scope_coverage: Optional ScopeCoverageManifest or dictionary.
 
     Returns:
         The file path where the report JSON was written.
@@ -236,6 +299,11 @@ def generate_json_report(
         status=status,
         reviewer_notes=reviewer_notes,
         compliance_result=compliance_result,
+        image_urls=image_urls,
+        evidence_image_urls=evidence_image_urls,
+        is_complete_scan=is_complete_scan,
+        guidance=guidance,
+        scope_coverage=scope_coverage,
     )
 
     if not output_path:

@@ -29,6 +29,7 @@ from app.schemas.declaration import (
     PackageComposition,
 )
 from app.schemas.guidance import InspectionGuidance
+from app.schemas.inspection_state import InspectionState, NextBestAction
 from app.schemas.violation import Violation
 
 
@@ -125,6 +126,12 @@ class ScanResponse(BaseModel):
     )
     composition: Optional[PackageComposition] = Field(
         default=None, description="Structured package composition and constituent items evidence"
+    )
+    inspection_state: Optional[InspectionState] = Field(
+        default=None, description="Deterministic operational inspection state and completeness metrics"
+    )
+    next_best_action: Optional[NextBestAction] = Field(
+        default=None, description="The single most useful deterministic operational action recommended to the field inspector"
     )
     created_at: str = Field(..., description="ISO8601 creation timestamp")
     completed_at: Optional[str] = Field(

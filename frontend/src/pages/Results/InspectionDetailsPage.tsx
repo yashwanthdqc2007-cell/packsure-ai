@@ -4,10 +4,12 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Calendar,
   Camera,
   Check,
   CheckCircle2,
+  Compass,
   Crosshair,
   Edit3,
   ExternalLink,
@@ -23,6 +25,7 @@ import {
   Scale,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Tag,
   Undo2,
   UserCheck,
@@ -521,6 +524,162 @@ export const InspectionDetailsPage: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* Phase 5A: Inspection Status & Next Best Action Copilot */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Card A: Inspection Status */}
+        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <Compass className="w-4 h-4 text-brand-blue" />
+              Inspection Status
+            </span>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
+                scan?.inspection_state?.status === 'READY_TO_FINALIZE'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : scan?.inspection_state?.status === 'READY_TO_REVIEW'
+                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                  : scan?.inspection_state?.status === 'NEEDS_REVIEW'
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+            >
+              {scan?.inspection_state?.status?.replace('_', ' ') || 'EVALUATING'}
+            </span>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center justify-between py-1 border-b border-slate-50">
+              <span className="text-slate-600">Visual label checks</span>
+              <span className="font-semibold flex items-center gap-1 text-slate-800">
+                {scan?.inspection_state?.visual_checks_complete ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">Complete</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="text-amber-700">Incomplete</span>
+                  </>
+                )}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-b border-slate-50">
+              <span className="text-slate-600">Package view coverage</span>
+              <span className="font-semibold text-slate-800 flex items-center gap-1">
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span>
+                  {scan?.inspection_state?.views_captured || (scan?.image_urls ? scan.image_urls.length : 1)} view
+                  {(scan?.inspection_state?.views_captured || (scan?.image_urls ? scan.image_urls.length : 1)) > 1 ? 's' : ''}
+                  {scan?.is_complete_scan ? ' (complete)' : ''}
+                </span>
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-b border-slate-50">
+              <span className="text-slate-600">Evidence review</span>
+              <span className="font-semibold flex items-center gap-1">
+                {scan?.reviewer_notes ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">Reviewed</span>
+                  </>
+                ) : scan?.inspection_state?.unresolved_count && scan.inspection_state.unresolved_count > 0 ? (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="text-amber-700">{scan.inspection_state.unresolved_count} pending</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">Verified</span>
+                  </>
+                )}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-b border-slate-50 text-slate-500">
+              <span>Physical verification</span>
+              <span className="font-medium flex items-center gap-1">
+                <span className="text-slate-400">○</span>
+                <span>Not evaluated</span>
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 text-slate-500">
+              <span>External verification</span>
+              <span className="font-medium flex items-center gap-1">
+                <span className="text-slate-400">○</span>
+                <span>Not evaluated</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Card B: Inspection Copilot (Next Best Action) */}
+        <div className="p-4 bg-gradient-to-br from-blue-50/90 to-indigo-50/70 rounded-xl border border-blue-200/80 shadow-2xs flex flex-col justify-between space-y-3">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-brand-blue" />
+                Inspection Copilot
+              </span>
+              <span className="text-[10px] font-semibold text-blue-700 bg-white/80 px-2 py-0.5 rounded border border-blue-200">
+                Next Best Action
+              </span>
+            </div>
+
+            <h4 className="text-sm font-bold text-slate-900">
+              {scan?.next_best_action?.title || 'Review Inspection Results'}
+            </h4>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {scan?.next_best_action?.description ||
+                'All visible mandatory label declarations have been processed. Review evidence details or submit inspector notes.'}
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-blue-200/60 flex items-center justify-between gap-3">
+            <span className="text-[11px] text-blue-800 font-medium">
+              {scan?.inspection_state?.summary || 'Follow copilot recommendation to proceed.'}
+            </span>
+
+            {scan?.next_best_action?.target_tab === 'review' ? (
+              <Button
+                size="sm"
+                onClick={() => setActiveTab('review')}
+                icon={<ArrowRight className="w-3.5 h-3.5" />}
+                className="flex-shrink-0"
+              >
+                {scan.next_best_action.suggested_button_text || 'Review Evidence'}
+              </Button>
+            ) : scan?.next_best_action?.action_code === 'image_recapture_quality' ||
+              scan?.next_best_action?.action_code === 'capture_additional_view' ? (
+              <Link to={`/new-inspection?category=${encodeURIComponent(scan?.product_category || '')}`}>
+                <Button size="sm" icon={<Camera className="w-3.5 h-3.5" />} className="flex-shrink-0">
+                  {scan.next_best_action.suggested_button_text || 'Capture View'}
+                </Button>
+              </Link>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (scan?.next_best_action?.target_tab) {
+                    setActiveTab(scan.next_best_action.target_tab as any)
+                  }
+                }}
+                icon={<ArrowRight className="w-3.5 h-3.5" />}
+                className="flex-shrink-0"
+              >
+                {scan?.next_best_action?.suggested_button_text || 'View Details'}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Intelligent Recapture Guidance Card */}
       {scan?.guidance && (scan.guidance.needs_recapture || scan.guidance.issues.length > 0) && (

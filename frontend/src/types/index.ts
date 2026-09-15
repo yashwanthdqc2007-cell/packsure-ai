@@ -190,11 +190,13 @@ export interface ComplianceResult {
   scope_coverage?: ScopeCoverageManifest | null
   qr_evidence?: QREvidence | null
   composition?: PackageComposition | null
+  inspection_state?: InspectionState | null
+  next_best_action?: NextBestAction | null
 }
 
 
 // ============================================================
-// 4. Inspection Guidance Models
+// 4. Inspection Guidance & Operational State Models
 // ============================================================
 
 export type GuidancePriority = 'none' | 'low' | 'medium' | 'high' | 'critical'
@@ -220,6 +222,35 @@ export interface InspectionGuidance {
   issues: GuidanceIssue[]
   actionable_steps: string[]
   coverage_estimate_pct?: number | null
+}
+
+export type InspectionStateStatus = 'INCOMPLETE' | 'NEEDS_REVIEW' | 'READY_TO_REVIEW' | 'READY_TO_FINALIZE'
+export type OfficerReviewStatus = 'NOT_REQUIRED' | 'PENDING' | 'COMPLETED'
+export type PhysicalChecksStatus = 'NOT_EVALUATED' | 'PENDING' | 'COMPLETED'
+export type ExternalChecksStatus = 'NOT_EVALUATED' | 'PENDING' | 'COMPLETED'
+
+export interface NextBestAction {
+  action_code: string
+  title: string
+  description: string
+  priority: string
+  target_tab?: string | null
+  target_panel?: string | null
+  suggested_button_text?: string | null
+}
+
+export interface InspectionState {
+  status: InspectionStateStatus
+  visual_checks_complete: boolean
+  views_captured: number
+  unresolved_count: number
+  quality_blockers: string[]
+  evidence_conflicts: string[]
+  officer_review_status: OfficerReviewStatus
+  physical_checks_status: PhysicalChecksStatus
+  external_checks_status: ExternalChecksStatus
+  ready_to_finalize: boolean
+  summary?: string | null
 }
 
 
@@ -263,6 +294,8 @@ export interface ScanResponse {
   scope_coverage?: ScopeCoverageManifest | null
   qr_evidence?: QREvidence | null
   composition?: PackageComposition | null
+  inspection_state?: InspectionState | null
+  next_best_action?: NextBestAction | null
   created_at: string
   completed_at?: string | null
 }

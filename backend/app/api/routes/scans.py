@@ -40,6 +40,7 @@ from app.schemas.declaration import (
     PackageComposition,
 )
 from app.schemas.guidance import InspectionGuidance
+from app.schemas.inspection_state import InspectionState, NextBestAction
 from app.schemas.scan import (
     ScanInitResponse,
     ScanResponse,
@@ -341,10 +342,12 @@ def get_scan(
         elif isinstance(raw_guidance, InspectionGuidance):
             guidance_obj = raw_guidance
 
-    # Construct deterministic ScopeCoverageManifest, QREvidence, and PackageComposition
+    # Construct deterministic ScopeCoverageManifest, QREvidence, PackageComposition, InspectionState, and NextBestAction
     scope_manifest_obj = None
     qr_evidence_obj = None
     composition_obj = None
+    inspection_state_obj = None
+    next_best_action_obj = None
     report_json_path = os.path.join(LOCAL_STORAGE_BASE, id, "report.json")
     if os.path.exists(report_json_path):
         try:
@@ -356,6 +359,10 @@ def get_scan(
                     qr_evidence_obj = QREvidence.model_validate(report_data["qr_evidence"])
                 if "composition" in report_data and report_data["composition"]:
                     composition_obj = PackageComposition.model_validate(report_data["composition"])
+                if "inspection_state" in report_data and report_data["inspection_state"]:
+                    inspection_state_obj = InspectionState.model_validate(report_data["inspection_state"])
+                if "next_best_action" in report_data and report_data["next_best_action"]:
+                    next_best_action_obj = NextBestAction.model_validate(report_data["next_best_action"])
         except Exception as e:
             logger.debug(f"Could not load metadata from report artifact for {id}: {e}")
 
@@ -385,6 +392,8 @@ def get_scan(
         scope_coverage=scope_manifest_obj,
         qr_evidence=qr_evidence_obj,
         composition=composition_obj,
+        inspection_state=inspection_state_obj,
+        next_best_action=next_best_action_obj,
         created_at=scan.get("created_at", datetime.now(timezone.utc).isoformat()),
         completed_at=scan.get("completed_at"),
     )

@@ -47,6 +47,7 @@ from app.services.composition_service import (
     reconcile_package_composition_across_views,
 )
 from app.services.guidance_service import generate_inspection_guidance
+from app.services.inspection_service import derive_inspection_state_and_next_action
 from app.services.qr_service import evaluate_qr_evidence_across_views
 from app.services.image_service import (
     DESKEW_MAX_ANGLE_LIMIT,
@@ -341,6 +342,19 @@ def process_compliance_inspection(
         views_captured_count=1,
         is_complete_scan=is_complete_scan,
     )
+
+    # 11. Derive Operational Inspection State & Next Best Action (Phase 5A)
+    try:
+        insp_state, next_act = derive_inspection_state_and_next_action(
+            compliance_result=compliance_result,
+            quality_reports=[quality_report],
+            views_captured_count=1,
+            is_complete_scan=is_complete_scan,
+        )
+        compliance_result.inspection_state = insp_state
+        compliance_result.next_best_action = next_act
+    except Exception as insp_err:
+        logger.warning(f"Inspection state derivation encountered a non-fatal error: {insp_err}")
 
     return compliance_result
 
@@ -652,6 +666,19 @@ def process_multi_view_compliance_from_bytes(
         views_captured_count=len(views),
         is_complete_scan=is_complete_scan,
     )
+
+    # 7. Derive Operational Inspection State & Next Best Action across all views (Phase 5A)
+    try:
+        insp_state, next_act = derive_inspection_state_and_next_action(
+            compliance_result=compliance_result,
+            quality_reports=quality_reports,
+            views_captured_count=len(views),
+            is_complete_scan=is_complete_scan,
+        )
+        compliance_result.inspection_state = insp_state
+        compliance_result.next_best_action = next_act
+    except Exception as insp_err:
+        logger.warning(f"Multi-view inspection state derivation encountered a non-fatal error: {insp_err}")
 
     return quality_reports, compliance_result, decoded_images, evidence_paths
 

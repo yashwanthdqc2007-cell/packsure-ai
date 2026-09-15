@@ -30,6 +30,7 @@ from app.schemas.declaration import (
 )
 from app.schemas.guidance import InspectionGuidance
 from app.schemas.inspection_state import InspectionState, NextBestAction
+from app.schemas.quantity import QuantityMeasurement, QuantityMeasurementInput
 from app.schemas.violation import Violation
 
 
@@ -127,6 +128,9 @@ class ScanResponse(BaseModel):
     composition: Optional[PackageComposition] = Field(
         default=None, description="Structured package composition and constituent items evidence"
     )
+    quantity_measurement: Optional[QuantityMeasurement] = Field(
+        default=None, description="Physical net quantity measurement and First Schedule MPE evaluation"
+    )
     inspection_state: Optional[InspectionState] = Field(
         default=None, description="Deterministic operational inspection state and completeness metrics"
     )
@@ -183,4 +187,8 @@ class ScanReviewRequest(BaseModel):
     corrected_declarations: List[CorrectedDeclaration] = Field(
         default_factory=list,
         description="Optional list of manual field overrides/corrections",
+    )
+    quantity_measurement: Optional[QuantityMeasurementInput] = Field(
+        default=None,
+        description="Optional physical net quantity measurement entered by inspector during review",
     )

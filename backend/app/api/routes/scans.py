@@ -41,6 +41,7 @@ from app.schemas.declaration import (
 )
 from app.schemas.guidance import InspectionGuidance
 from app.schemas.inspection_state import InspectionState, NextBestAction
+from app.schemas.quantity import QuantityMeasurement, QuantityMeasurementInput
 from app.schemas.scan import (
     ScanInitResponse,
     ScanResponse,
@@ -52,6 +53,8 @@ from app.services.compliance_service import (
     process_multi_view_compliance_from_bytes,
 )
 from app.services.image_service import validate_image_file
+from app.services.inspection_service import derive_inspection_state_and_next_action
+from app.services.quantity_service import evaluate_physical_quantity
 from app.services.report_service import generate_json_report
 
 logger = logging.getLogger(__name__)
@@ -342,12 +345,13 @@ def get_scan(
         elif isinstance(raw_guidance, InspectionGuidance):
             guidance_obj = raw_guidance
 
-    # Construct deterministic ScopeCoverageManifest, QREvidence, PackageComposition, InspectionState, and NextBestAction
+    # Construct deterministic ScopeCoverageManifest, QREvidence, PackageComposition, InspectionState, NextBestAction, and QuantityMeasurement
     scope_manifest_obj = None
     qr_evidence_obj = None
     composition_obj = None
     inspection_state_obj = None
     next_best_action_obj = None
+    quantity_measurement_obj = None
     report_json_path = os.path.join(LOCAL_STORAGE_BASE, id, "report.json")
     if os.path.exists(report_json_path):
         try:
@@ -363,6 +367,8 @@ def get_scan(
                     inspection_state_obj = InspectionState.model_validate(report_data["inspection_state"])
                 if "next_best_action" in report_data and report_data["next_best_action"]:
                     next_best_action_obj = NextBestAction.model_validate(report_data["next_best_action"])
+                if "quantity_measurement" in report_data and report_data["quantity_measurement"]:
+                    quantity_measurement_obj = QuantityMeasurement.model_validate(report_data["quantity_measurement"])
         except Exception as e:
             logger.debug(f"Could not load metadata from report artifact for {id}: {e}")
 
@@ -392,6 +398,7 @@ def get_scan(
         scope_coverage=scope_manifest_obj,
         qr_evidence=qr_evidence_obj,
         composition=composition_obj,
+        quantity_measurement=quantity_measurement_obj,
         inspection_state=inspection_state_obj,
         next_best_action=next_best_action_obj,
         created_at=scan.get("created_at", datetime.now(timezone.utc).isoformat()),
@@ -479,6 +486,51 @@ def review_scan(
         report_json_path = os.path.join(scan_dir, "report.json")
         current_decls = repo.get_declarations(id)
         current_viols = repo.get_violations(id)
+
+        # Load existing artifacts to preserve metadata
+        existing_composition = None
+        existing_qr = None
+        existing_guidance = None
+        existing_scope = None
+        existing_meas = None
+        if os.path.exists(report_json_path):
+            try:
+                with open(report_json_path, "r", encoding="utf-8") as rf:
+                    rdata = json.load(rf)
+                    if "composition" in rdata and rdata["composition"]:
+                        existing_composition = PackageComposition.model_validate(rdata["composition"])
+                    if "qr_evidence" in rdata and rdata["qr_evidence"]:
+                        existing_qr = QREvidence.model_validate(rdata["qr_evidence"])
+                    if "guidance" in rdata and rdata["guidance"]:
+                        existing_guidance = InspectionGuidance.model_validate(rdata["guidance"])
+                    if "scope_coverage" in rdata and rdata["scope_coverage"]:
+                        existing_scope = ScopeCoverageManifest.model_validate(rdata["scope_coverage"])
+                    if "quantity_measurement" in rdata and rdata["quantity_measurement"]:
+                        existing_meas = QuantityMeasurement.model_validate(rdata["quantity_measurement"])
+            except Exception:
+                pass
+
+        if review_req.quantity_measurement:
+            existing_meas = evaluate_physical_quantity(
+                measurement_input=review_req.quantity_measurement,
+                declarations=current_decls,
+                composition=existing_composition,
+            )
+
+        updated_state, updated_nba = derive_inspection_state_and_next_action(
+            declarations=current_decls,
+            violations=current_viols,
+            guidance=existing_guidance,
+            scope_coverage=existing_scope,
+            qr_evidence=existing_qr,
+            composition=existing_composition,
+            views_captured_count=len(scan.get("image_urls") or [1]),
+            is_complete_scan=scan.get("is_complete_scan", False),
+            is_reviewed=True,
+            reviewer_notes=review_req.reviewer_notes,
+            quantity_measurement=existing_meas,
+        )
+
         report_path = generate_json_report(
             scan_id=id,
             verdict=target_verdict,
@@ -493,10 +545,128 @@ def review_scan(
             completed_at=scan.get("completed_at"),
             status=scan.get("status", "complete"),
             reviewer_notes=review_req.reviewer_notes,
+            guidance=existing_guidance,
+            scope_coverage=existing_scope,
+            qr_evidence=existing_qr,
+            composition=existing_composition,
+            inspection_state=updated_state,
+            next_best_action=updated_nba,
+            quantity_measurement=existing_meas,
         )
         repo.save_report(id, report_url=report_path, format_type="json")
     except Exception as report_err:
         logger.error(f"Failed to refresh inspection report after review for {id}: {report_err}", exc_info=True)
 
     # Return updated full scan payload
+    return get_scan(id=id, repo=repo)
+
+
+@router.post(
+    "/{id}/quantity",
+    response_model=ScanResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Submit physical net quantity measurement for individual package verification",
+)
+def record_physical_quantity(
+    id: str,
+    measurement_input: QuantityMeasurementInput,
+    repo: BaseScanRepository = Depends(get_db_repository),
+) -> ScanResponse:
+    """Record physical scale/gauge measurement and evaluate First Schedule Table I MPE tolerance."""
+    scan = repo.get_scan(id)
+    if not scan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan not found",
+        )
+
+    current_status = scan.get("status")
+    if current_status != "complete":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot record physical measurement for scan in '{current_status}' status. Scan must be complete.",
+        )
+
+    # 1. Fetch current declarations & metadata
+    current_decls = repo.get_declarations(id)
+    current_viols = repo.get_violations(id)
+
+    scan_dir = os.path.join(LOCAL_STORAGE_BASE, id)
+    report_json_path = os.path.join(scan_dir, "report.json")
+    composition_obj = None
+    qr_evidence_obj = None
+    guidance_obj = None
+    scope_manifest_obj = None
+    existing_evidence_conflicts: list[str] = []
+
+    if os.path.exists(report_json_path):
+        try:
+            with open(report_json_path, "r", encoding="utf-8") as rf:
+                report_data = json.load(rf)
+                if "composition" in report_data and report_data["composition"]:
+                    composition_obj = PackageComposition.model_validate(report_data["composition"])
+                if "qr_evidence" in report_data and report_data["qr_evidence"]:
+                    qr_evidence_obj = QREvidence.model_validate(report_data["qr_evidence"])
+                if "guidance" in report_data and report_data["guidance"]:
+                    guidance_obj = InspectionGuidance.model_validate(report_data["guidance"])
+                if "scope_coverage" in report_data and report_data["scope_coverage"]:
+                    scope_manifest_obj = ScopeCoverageManifest.model_validate(report_data["scope_coverage"])
+                if "inspection_state" in report_data and report_data["inspection_state"]:
+                    existing_state = report_data["inspection_state"]
+                    existing_evidence_conflicts = existing_state.get("evidence_conflicts", [])
+        except Exception as e:
+            logger.debug(f"Could not load metadata from report for {id}: {e}")
+
+    # 2. Evaluate physical measurement deterministically via quantity_service
+    measurement = evaluate_physical_quantity(
+        measurement_input=measurement_input,
+        declarations=current_decls,
+        composition=composition_obj,
+        evidence_conflicts=existing_evidence_conflicts,
+    )
+
+    # 3. Derive updated operational inspection state and next best action
+    is_reviewed_flag = scan.get("reviewer_notes") is not None
+    updated_state, updated_nba = derive_inspection_state_and_next_action(
+        declarations=current_decls,
+        violations=current_viols,
+        guidance=guidance_obj,
+        scope_coverage=scope_manifest_obj,
+        qr_evidence=qr_evidence_obj,
+        composition=composition_obj,
+        views_captured_count=len(scan.get("image_urls") or [1]),
+        is_complete_scan=scan.get("is_complete_scan", False),
+        is_reviewed=is_reviewed_flag,
+        reviewer_notes=scan.get("reviewer_notes"),
+        quantity_measurement=measurement,
+    )
+
+    # 4. Save updated JSON inspection report artifact
+    try:
+        report_path = generate_json_report(
+            scan_id=id,
+            verdict=scan.get("verdict"),
+            compliance_score=scan.get("compliance_score"),
+            product_category=scan.get("product_category"),
+            declarations=current_decls,
+            violations=current_viols,
+            image_path=scan.get("image_url"),
+            evidence_path=scan.get("evidence_image_url"),
+            output_path=report_json_path,
+            created_at=scan.get("created_at"),
+            completed_at=scan.get("completed_at"),
+            status=scan.get("status", "complete"),
+            reviewer_notes=scan.get("reviewer_notes"),
+            guidance=guidance_obj,
+            scope_coverage=scope_manifest_obj,
+            qr_evidence=qr_evidence_obj,
+            composition=composition_obj,
+            inspection_state=updated_state,
+            next_best_action=updated_nba,
+            quantity_measurement=measurement,
+        )
+        repo.save_report(id, report_url=report_path, format_type="json")
+    except Exception as report_err:
+        logger.error(f"Failed to refresh inspection report after physical measurement for {id}: {report_err}", exc_info=True)
+
     return get_scan(id=id, repo=repo)

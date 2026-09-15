@@ -37,12 +37,14 @@ import {
 import Card from '../../components/common/Card'
 import StatusBadge from '../../components/common/StatusBadge'
 import Button from '../../components/common/Button'
-import { getScan, reviewScan } from '../../services/scanService'
+import { getScan, reviewScan, recordPhysicalQuantity } from '../../services/scanService'
 import { resolveArtifactUrl, type ApiErrorDetail } from '../../services/api'
 import type {
   CorrectedDeclaration,
   DeclarationStatus,
   ExtractedDeclaration,
+  MeasurementMethod,
+  QuantityMeasurementInput,
   ScanResponse,
   ScanReviewRequest,
 } from '../../types'
@@ -78,6 +80,59 @@ export const InspectionDetailsPage: React.FC = () => {
   const [isSubmittingReview, setIsSubmittingReview] = useState<boolean>(false)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string | null>(null)
+
+  // Physical Quantity Verification States (Phase 6B)
+  const [isEnteringQuantity, setIsEnteringQuantity] = useState<boolean>(false)
+  const [measuredQty, setMeasuredQty] = useState<string>('')
+  const [measuredUnit, setMeasuredUnit] = useState<string>('g')
+  const [declaredQtyOverride, setDeclaredQtyOverride] = useState<string>('')
+  const [declaredUnitOverride, setDeclaredUnitOverride] = useState<string>('')
+  const [tareWeight, setTareWeight] = useState<string>('')
+  const [grossWeight, setGrossWeight] = useState<string>('')
+  const [measurementMethod, setMeasurementMethod] = useState<MeasurementMethod>('MANUAL_SCALE')
+  const [instrumentId, setInstrumentId] = useState<string>('')
+  const [quantityNotes, setQuantityNotes] = useState<string>('')
+  const [isSubmittingQty, setIsSubmittingQty] = useState<boolean>(false)
+  const [qtyError, setQtyError] = useState<string | null>(null)
+  const [qtySuccessMsg, setQtySuccessMsg] = useState<string | null>(null)
+
+  const handleSaveQuantityMeasurement = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!scan?.scan_id) return
+    const num = parseFloat(measuredQty)
+    if (isNaN(num) || num <= 0) {
+      setQtyError('Please enter a valid positive measured quantity.')
+      return
+    }
+
+    try {
+      setIsSubmittingQty(true)
+      setQtyError(null)
+      setQtySuccessMsg(null)
+
+      const payload: QuantityMeasurementInput = {
+        measured_quantity: num,
+        measured_unit: measuredUnit,
+        declared_quantity: declaredQtyOverride ? parseFloat(declaredQtyOverride) : undefined,
+        declared_unit: declaredUnitOverride ? declaredUnitOverride : undefined,
+        tare_weight: tareWeight ? parseFloat(tareWeight) : undefined,
+        gross_weight: grossWeight ? parseFloat(grossWeight) : undefined,
+        method: measurementMethod,
+        instrument_id: instrumentId || undefined,
+        notes: quantityNotes || undefined,
+      }
+
+      const updatedScan = await recordPhysicalQuantity(scan.scan_id, payload)
+      setScan(updatedScan)
+      setQtySuccessMsg('Physical quantity measurement recorded and evaluated under First Schedule Table I.')
+      setIsEnteringQuantity(false)
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err.message || 'Failed to record physical measurement.'
+      setQtyError(detail)
+    } finally {
+      setIsSubmittingQty(false)
+    }
+  }
 
   const fetchScanDetails = async (scanId: string, isPollingAttempt: boolean = false) => {
     try {
@@ -638,14 +693,85 @@ export const InspectionDetailsPage: React.FC = () => {
       })
     }
 
-    // 6. Physical Metrology Check (Always present as Not Evaluated)
-    items.push({
-      icon: <Scale className="w-4 h-4 text-slate-400" />,
-      title: 'Physical Metrology (Net Quantity & Font Height mm)',
-      badge: 'Not Evaluated',
-      reason: 'Not evaluated — requires physical weighing balance and gauge measurement (LMR Rules 14–18, Rule 8).',
-      type: 'not_evaluated',
-    })
+    // 6. Physical Metrology Check (Dynamic based on quantity_measurement)
+    if (scan?.quantity_measurement) {
+      const qm = scan.quantity_measurement
+      if (qm.verdict === 'PASS') {
+        items.push({
+          icon: <Scale className="w-4 h-4 text-emerald-600" />,
+          title: 'Physical Metrology: Net Quantity',
+          badge: 'PASS',
+          reason: `Measured net quantity (${qm.measured_quantity} ${qm.measured_unit}) is within First Schedule Table I tolerance (MPE: ${qm.statutory_mpe ?? '—'} ${qm.measured_unit}).`,
+          type: 'actionable',
+          actionButton: (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigateToSection('overview', 'physical-quantity-card')}
+            >
+              View
+            </Button>
+          ),
+        })
+      } else if (qm.verdict === 'FAIL') {
+        items.push({
+          icon: <Scale className="w-4 h-4 text-red-600" />,
+          title: 'Physical Metrology: Deficiency Exceeds MPE',
+          badge: 'FAIL',
+          reason: `Measured quantity (${qm.measured_quantity} ${qm.measured_unit}) has deficiency of ${qm.deficiency} ${qm.measured_unit} exceeding statutory MPE (${qm.statutory_mpe} ${qm.measured_unit}).`,
+          type: 'actionable',
+          actionButton: (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigateToSection('overview', 'physical-quantity-card')}
+            >
+              View
+            </Button>
+          ),
+        })
+      } else {
+        items.push({
+          icon: <Scale className="w-4 h-4 text-amber-600" />,
+          title: 'Physical Metrology: Review Required',
+          badge: 'Needs Review',
+          reason: qm.notes || 'Incompatible units or ambiguous package target requires officer review.',
+          type: 'actionable',
+          actionButton: (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                navigateToSection('overview', 'physical-quantity-card')
+                setIsEnteringQuantity(true)
+              }}
+            >
+              Review
+            </Button>
+          ),
+        })
+      }
+    } else {
+      items.push({
+        icon: <Scale className="w-4 h-4 text-slate-400" />,
+        title: 'Physical Metrology (Net Quantity Verification)',
+        badge: 'Not Evaluated',
+        reason: 'Not evaluated — requires physical scale or gauge measurement under LMR First Schedule Table I.',
+        type: 'not_evaluated',
+        actionButton: (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              navigateToSection('overview', 'physical-quantity-card')
+              setIsEnteringQuantity(true)
+            }}
+          >
+            Enter Measurement
+          </Button>
+        ),
+      })
+    }
 
     // 7. External Regulatory Check (Always present as Not Evaluated)
     items.push({
@@ -1623,6 +1749,357 @@ export const InspectionDetailsPage: React.FC = () => {
                 </Card>
               </div>
             )}
+
+            {/* Physical Quantity Verification (Phase 6B - First Schedule [Rules 2(e) & 22]) */}
+            <div id="physical-quantity-card">
+              <Card
+                title="Physical Quantity Verification"
+                subtitle="Individual package metrological verification under First Schedule [Rules 2(e) & 22], Table I"
+              >
+                <div className="space-y-4 text-xs">
+                  {/* Status Banner */}
+                  <div className="flex items-center justify-between p-3 rounded-lg border bg-slate-50 border-slate-200">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-brand-blue" />
+                      <span className="font-semibold text-slate-800">Physical Metrology Status</span>
+                    </div>
+                    {scan?.quantity_measurement ? (
+                      <span
+                        className={`text-xs font-bold px-2.5 py-1 rounded border uppercase flex items-center gap-1 ${
+                          scan.quantity_measurement.verdict === 'PASS'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : scan.quantity_measurement.verdict === 'FAIL'
+                            ? 'bg-red-50 text-red-800 border-red-300'
+                            : 'bg-amber-50 text-amber-800 border-amber-300'
+                        }`}
+                      >
+                        {scan.quantity_measurement.verdict === 'PASS' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                        {scan.quantity_measurement.verdict === 'FAIL' && <XCircle className="w-3.5 h-3.5 text-red-600" />}
+                        {scan.quantity_measurement.verdict === 'NEEDS_REVIEW' && <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />}
+                        {scan.quantity_measurement.verdict}
+                      </span>
+                    ) : (
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-200 text-slate-700 border border-slate-300">
+                        NOT EVALUATED
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Measurement Details (if evaluated) */}
+                  {scan?.quantity_measurement ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Declared Qty</span>
+                          <span className="font-semibold text-slate-900 text-sm mt-0.5 block font-mono">
+                            {scan.quantity_measurement.declared_quantity} {scan.quantity_measurement.declared_unit}
+                          </span>
+                        </div>
+
+                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Measured Net</span>
+                          <span className="font-semibold text-slate-900 text-sm mt-0.5 block font-mono">
+                            {scan.quantity_measurement.measured_quantity} {scan.quantity_measurement.measured_unit}
+                          </span>
+                        </div>
+
+                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Statutory MPE</span>
+                          <span className="font-semibold text-slate-900 text-sm mt-0.5 block font-mono">
+                            {scan.quantity_measurement.statutory_mpe !== null && scan.quantity_measurement.statutory_mpe !== undefined
+                              ? `${scan.quantity_measurement.statutory_mpe} ${scan.quantity_measurement.measured_unit}`
+                              : 'N/A'}
+                          </span>
+                        </div>
+
+                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Deficiency</span>
+                          <span
+                            className={`font-semibold text-sm mt-0.5 block font-mono ${
+                              scan.quantity_measurement.is_excess
+                                ? 'text-emerald-700'
+                                : Number(scan.quantity_measurement.deficiency) > Number(scan.quantity_measurement.statutory_mpe || 0)
+                                ? 'text-red-700 font-bold'
+                                : 'text-slate-900'
+                            }`}
+                          >
+                            {scan.quantity_measurement.is_excess
+                              ? `+${Math.abs(Number(scan.quantity_measurement.net_difference))} (Excess)`
+                              : `-${scan.quantity_measurement.deficiency} ${scan.quantity_measurement.measured_unit} (${scan.quantity_measurement.percentage_deficiency}%)`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Supplementary Details & Double-MPE */}
+                      <div className="p-3 bg-slate-50/70 border border-slate-200 rounded-lg space-y-1.5 text-[11px]">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Measurement Method:</span>
+                          <span className="font-semibold text-slate-800 font-mono">{scan.quantity_measurement.method}</span>
+                        </div>
+                        {scan.quantity_measurement.double_mpe_limit !== null && scan.quantity_measurement.double_mpe_limit !== undefined && (
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>Double-MPE Reference Limit (2×MPE):</span>
+                            <span className="font-semibold text-slate-800 font-mono">
+                              {scan.quantity_measurement.double_mpe_limit} {scan.quantity_measurement.measured_unit}
+                            </span>
+                          </div>
+                        )}
+                        {scan.quantity_measurement.instrument_id && (
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>Instrument Calibration ID:</span>
+                            <span className="font-semibold text-slate-800 font-mono">{scan.quantity_measurement.instrument_id}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Statutory Citation:</span>
+                          <span className="font-medium text-slate-700 italic">{scan.quantity_measurement.statutory_reference}</span>
+                        </div>
+                        {scan.quantity_measurement.notes && (
+                          <div className="pt-1 text-slate-600 border-t border-slate-200">
+                            <span className="font-semibold">Notes:</span> {scan.quantity_measurement.notes}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setMeasuredQty(String(scan.quantity_measurement?.measured_quantity || ''))
+                            setMeasuredUnit(scan.quantity_measurement?.measured_unit || 'g')
+                            setDeclaredQtyOverride(String(scan.quantity_measurement?.declared_quantity || ''))
+                            setDeclaredUnitOverride(scan.quantity_measurement?.declared_unit || 'g')
+                            setTareWeight(scan.quantity_measurement?.tare_weight ? String(scan.quantity_measurement.tare_weight) : '')
+                            setGrossWeight(scan.quantity_measurement?.gross_weight ? String(scan.quantity_measurement.gross_weight) : '')
+                            setInstrumentId(scan.quantity_measurement?.instrument_id || '')
+                            setQuantityNotes(scan.quantity_measurement?.notes || '')
+                            setIsEnteringQuantity(true)
+                          }}
+                        >
+                          Update Physical Measurement
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center space-y-2">
+                      <Scale className="w-8 h-8 text-slate-400 mx-auto" />
+                      <div className="text-xs text-slate-600 max-w-md mx-auto">
+                        Automated visual scan audited printed label text. Enter calibrated scale or gauge readings to evaluate physical net quantity against First Schedule Table I tolerances.
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon={<Scale className="w-3.5 h-3.5" />}
+                        onClick={() => {
+                          const netDecl = declarations.find((d) => d.field_name === 'net_quantity')
+                          if (netDecl?.raw_value) {
+                            const match = netDecl.raw_value.match(/(\d+(?:\.\d+)?)\s*([a-zA-Z]+)/)
+                            if (match) {
+                              setDeclaredQtyOverride(match[1])
+                              setDeclaredUnitOverride(match[2].toLowerCase())
+                              setMeasuredUnit(match[2].toLowerCase())
+                            }
+                          }
+                          setIsEnteringQuantity(true)
+                        }}
+                      >
+                        Enter Physical Measurement
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Inline Measurement Form */}
+                  {isEnteringQuantity && (
+                    <form onSubmit={handleSaveQuantityMeasurement} className="p-4 bg-blue-50/50 border border-blue-200 rounded-lg space-y-3 mt-3">
+                      <div className="flex items-center justify-between pb-2 border-b border-blue-200">
+                        <span className="font-bold text-blue-950 flex items-center gap-1.5">
+                          <Scale className="w-4 h-4 text-brand-blue" />
+                          Record Physical Package Measurement
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsEnteringQuantity(false)}
+                          className="text-slate-400 hover:text-slate-600"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {qtyError && (
+                        <div className="p-2.5 bg-red-50 border border-red-200 rounded text-red-700 text-xs flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                          <span>{qtyError}</span>
+                        </div>
+                      )}
+
+                      {qtySuccessMsg && (
+                        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 text-xs flex items-center gap-2">
+                          <Check className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                          <span>{qtySuccessMsg}</span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                            Measured Net Quantity *
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              step="any"
+                              required
+                              value={measuredQty}
+                              onChange={(e) => setMeasuredQty(e.target.value)}
+                              placeholder="e.g. 990"
+                              className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-brand-blue focus:border-brand-blue bg-white"
+                            />
+                            <select
+                              value={measuredUnit}
+                              onChange={(e) => setMeasuredUnit(e.target.value)}
+                              className="px-2 py-1.5 border border-slate-300 rounded text-xs bg-white font-mono"
+                            >
+                              <option value="g">g</option>
+                              <option value="kg">kg</option>
+                              <option value="ml">ml</option>
+                              <option value="L">L</option>
+                              <option value="m">m</option>
+                              <option value="cm">cm</option>
+                              <option value="U">U (Count)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                            Declared Quantity (Optional Override)
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              step="any"
+                              value={declaredQtyOverride}
+                              onChange={(e) => setDeclaredQtyOverride(e.target.value)}
+                              placeholder="e.g. 1000"
+                              className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-brand-blue focus:border-brand-blue bg-white"
+                            />
+                            <select
+                              value={declaredUnitOverride || measuredUnit}
+                              onChange={(e) => setDeclaredUnitOverride(e.target.value)}
+                              className="px-2 py-1.5 border border-slate-300 rounded text-xs bg-white font-mono"
+                            >
+                              <option value="g">g</option>
+                              <option value="kg">kg</option>
+                              <option value="ml">ml</option>
+                              <option value="L">L</option>
+                              <option value="m">m</option>
+                              <option value="cm">cm</option>
+                              <option value="U">U</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                            Measurement Apparatus / Method
+                          </label>
+                          <select
+                            value={measurementMethod}
+                            onChange={(e) => setMeasurementMethod(e.target.value as MeasurementMethod)}
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs bg-white"
+                          >
+                            <option value="MANUAL_SCALE">Manual Scale (Class II/III Balance)</option>
+                            <option value="VOLUMETRIC_MEASURE">Volumetric Measure (Calibrated Flask)</option>
+                            <option value="LINEAR_MEASURE">Linear Measure (Calibrated Rule)</option>
+                            <option value="PIECE_COUNT">Manual Verified Piece Count</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                            Instrument Calibration / Serial ID
+                          </label>
+                          <input
+                            type="text"
+                            value={instrumentId}
+                            onChange={(e) => setInstrumentId(e.target.value)}
+                            placeholder="e.g. CAL-SCALE-2026-09"
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-brand-blue focus:border-brand-blue bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                            Tare Weight (Optional)
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            value={tareWeight}
+                            onChange={(e) => setTareWeight(e.target.value)}
+                            placeholder="Packaging tare weight"
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-brand-blue focus:border-brand-blue bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                            Gross Weight (Optional)
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            value={grossWeight}
+                            onChange={(e) => setGrossWeight(e.target.value)}
+                            placeholder="Total package gross weight"
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-brand-blue focus:border-brand-blue bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold text-slate-700 text-[11px] mb-1">
+                          Auditor / Measurement Notes
+                        </label>
+                        <input
+                          type="text"
+                          value={quantityNotes}
+                          onChange={(e) => setQuantityNotes(e.target.value)}
+                          placeholder="e.g. Measured at ambient room temperature on verified benchmark balance"
+                          className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-brand-blue focus:border-brand-blue bg-white"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-blue-200">
+                        <span className="text-[10px] text-slate-500 italic">
+                          Tolerances evaluated deterministically under First Schedule Table I.
+                        </span>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setIsEnteringQuantity(false)}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            variant="primary"
+                            disabled={isSubmittingQty}
+                            icon={isSubmittingQty ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                          >
+                            {isSubmittingQty ? 'Evaluating...' : 'Save & Evaluate'}
+                          </Button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              </Card>
+            </div>
 
             {/* Inspection Quality Issues (e.g. QUALITY-REJECT) */}
             {qualityIssues.length > 0 && (

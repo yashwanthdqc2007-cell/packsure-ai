@@ -15,6 +15,7 @@ import type {
   AnalyticsPeriod,
   AnalyticsResponse,
   HistoryQueryParams,
+  QuantityMeasurementInput,
   RulesQueryParams,
   RulesResponse,
   ScanCreateParams,
@@ -125,5 +126,19 @@ export async function getRules(
   const response = await api.get<RulesResponse>('/rules', {
     params,
   })
+  return response.data
+}
+
+/**
+ * Submit physical scale/gauge measurement for individual package verification under First Schedule.
+ *
+ * Calls: POST /api/v1/scans/{id}/quantity
+ */
+export async function recordPhysicalQuantity(
+  scanId: string,
+  measurementInput: QuantityMeasurementInput
+): Promise<ScanResponse> {
+  const cleanId = encodeURIComponent(scanId.trim())
+  const response = await api.post<ScanResponse>(`/scans/${cleanId}/quantity`, measurementInput)
   return response.data
 }

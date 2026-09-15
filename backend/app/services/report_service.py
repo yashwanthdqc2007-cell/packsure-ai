@@ -20,6 +20,7 @@ from app.schemas.compliance import (
 )
 from app.schemas.declaration import ExtractedDeclaration, PackageComposition
 from app.schemas.inspection_state import InspectionState, NextBestAction
+from app.schemas.quantity import QuantityMeasurement
 from app.schemas.violation import Violation
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ def compile_report_dict(
     composition: Optional[Union[PackageComposition, Dict[str, Any]]] = None,
     inspection_state: Optional[Union[InspectionState, Dict[str, Any]]] = None,
     next_best_action: Optional[Union[NextBestAction, Dict[str, Any]]] = None,
+    quantity_measurement: Optional[Union[QuantityMeasurement, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Compile structured inspection report dictionary from scan domain models.
 
@@ -232,6 +234,15 @@ def compile_report_dict(
         elif isinstance(next_best_action, dict):
             serialized_next_best_action = next_best_action
 
+    # Serialize quantity_measurement
+    serialized_quantity_measurement: Optional[Dict[str, Any]] = None
+    if quantity_measurement is not None:
+        if hasattr(quantity_measurement, "model_dump"):
+            # model_dump(mode="json") serializes Decimals to floats/strings safely
+            serialized_quantity_measurement = json.loads(quantity_measurement.model_dump_json())
+        elif isinstance(quantity_measurement, dict):
+            serialized_quantity_measurement = quantity_measurement
+
     product_name = _extract_product_name(decls_list)
 
     report_dict: Dict[str, Any] = {
@@ -297,6 +308,9 @@ def compile_report_dict(
     if serialized_next_best_action is not None:
         report_dict["next_best_action"] = serialized_next_best_action
 
+    if serialized_quantity_measurement is not None:
+        report_dict["quantity_measurement"] = serialized_quantity_measurement
+
     return report_dict
 
 
@@ -324,6 +338,7 @@ def generate_json_report(
     composition: Optional[Union[PackageComposition, Dict[str, Any]]] = None,
     inspection_state: Optional[Union[InspectionState, Dict[str, Any]]] = None,
     next_best_action: Optional[Union[NextBestAction, Dict[str, Any]]] = None,
+    quantity_measurement: Optional[Union[QuantityMeasurement, Dict[str, Any]]] = None,
 ) -> str:
     """Generate and serialize a structured JSON inspection report to disk.
 
@@ -378,6 +393,7 @@ def generate_json_report(
         composition=composition,
         inspection_state=inspection_state,
         next_best_action=next_best_action,
+        quantity_measurement=quantity_measurement,
     )
 
     if not output_path:

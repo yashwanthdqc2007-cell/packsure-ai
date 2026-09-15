@@ -255,6 +255,58 @@ export interface InspectionState {
 
 
 // ============================================================
+// 4.5. Physical Quantity Metrology Models
+// ============================================================
+
+export type MeasurementMethod =
+  | 'MANUAL_SCALE'
+  | 'VOLUMETRIC_MEASURE'
+  | 'LINEAR_MEASURE'
+  | 'PIECE_COUNT'
+
+export type IndividualQuantityVerdict =
+  | 'NOT_EVALUATED'
+  | 'PASS'
+  | 'FAIL'
+  | 'NEEDS_REVIEW'
+
+export interface QuantityMeasurement {
+  declared_quantity: number | string
+  declared_unit: string
+  measured_quantity: number | string
+  measured_unit: string
+  tare_weight?: number | string | null
+  gross_weight?: number | string | null
+  net_difference: number | string
+  deficiency: number | string
+  percentage_deficiency: number | string
+  statutory_mpe?: number | string | null
+  double_mpe_limit?: number | string | null
+  is_excess: boolean
+  verdict: IndividualQuantityVerdict
+  method: MeasurementMethod
+  instrument_id?: string | null
+  inspector_id?: string | null
+  measured_at: string
+  notes?: string | null
+  statutory_reference: string
+}
+
+export interface QuantityMeasurementInput {
+  declared_quantity?: number | string | null
+  declared_unit?: string | null
+  measured_quantity: number | string
+  measured_unit: string
+  tare_weight?: number | string | null
+  gross_weight?: number | string | null
+  method?: MeasurementMethod
+  instrument_id?: string | null
+  inspector_id?: string | null
+  notes?: string | null
+}
+
+
+// ============================================================
 // 5. Scan API Request & Response Models
 // ============================================================
 
@@ -294,6 +346,7 @@ export interface ScanResponse {
   scope_coverage?: ScopeCoverageManifest | null
   qr_evidence?: QREvidence | null
   composition?: PackageComposition | null
+  quantity_measurement?: QuantityMeasurement | null
   inspection_state?: InspectionState | null
   next_best_action?: NextBestAction | null
   created_at: string

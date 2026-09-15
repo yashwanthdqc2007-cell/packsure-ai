@@ -40,6 +40,7 @@ from app.schemas.inspection_state import (
     OfficerReviewStatus,
     PhysicalChecksStatus,
 )
+from app.schemas.quantity import IndividualQuantityVerdict, QuantityMeasurement
 from app.schemas.violation import Violation
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def derive_inspection_state_and_next_action(
     is_complete_scan: bool = False,
     is_reviewed: bool = False,
     reviewer_notes: Optional[str] = None,
+    quantity_measurement: Optional[QuantityMeasurement] = None,
 ) -> Tuple[InspectionState, NextBestAction]:
     """Deterministically derive operational inspection state and the single next best action.
 
@@ -272,6 +274,20 @@ def derive_inspection_state_and_next_action(
     else:
         summary_text = "Inspection incomplete. Additional view or image recapture required."
 
+    # Determine physical checks metrological status
+    if quantity_measurement is not None:
+        if quantity_measurement.verdict in (
+            IndividualQuantityVerdict.PASS,
+            IndividualQuantityVerdict.FAIL,
+        ):
+            phys_status = PhysicalChecksStatus.COMPLETED
+        elif quantity_measurement.verdict == IndividualQuantityVerdict.NEEDS_REVIEW:
+            phys_status = PhysicalChecksStatus.PENDING
+        else:
+            phys_status = PhysicalChecksStatus.NOT_EVALUATED
+    else:
+        phys_status = PhysicalChecksStatus.NOT_EVALUATED
+
     inspection_state = InspectionState(
         status=state_status,
         visual_checks_complete=visual_checks_complete,
@@ -280,7 +296,7 @@ def derive_inspection_state_and_next_action(
         quality_blockers=quality_blockers,
         evidence_conflicts=evidence_conflicts,
         officer_review_status=officer_review_status,
-        physical_checks_status=PhysicalChecksStatus.NOT_EVALUATED,
+        physical_checks_status=phys_status,
         external_checks_status=ExternalChecksStatus.NOT_EVALUATED,
         ready_to_finalize=ready_to_finalize,
         summary=summary_text,

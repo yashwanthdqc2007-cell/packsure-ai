@@ -132,6 +132,52 @@ export interface ScopeCoverageManifest {
   disclaimer: string
 }
 
+/** Detection and decoding status for on-package QR codes. */
+export type QREvidenceStatus = 'detected' | 'decoded' | 'undecodable' | 'missing' | 'uncertain'
+
+/** Statutory applicability of Rule 6 electronic product QR offloading. */
+export type ElectronicApplicability = 'APPLICABLE' | 'NOT_APPLICABLE' | 'UNCERTAIN'
+
+/** Typed evidence container for on-package QR codes under Rule 6 / G.S.R. 456(E). */
+export interface QREvidence {
+  detected: boolean
+  status: QREvidenceStatus
+  confidence: number
+  bounding_box?: BoundingBox | null
+  decoded_payload?: string | null
+  payload_valid?: boolean | null
+  source_image_index?: number | null
+  instruction_detected: boolean
+  instruction_text?: string | null
+  applicable_product: ElectronicApplicability
+  statutory_note?: string | null
+}
+
+/** Package composition classification types. */
+export type PackageType = 'SINGLE' | 'MULTI_PIECE' | 'COMBINATION' | 'GROUP' | 'KIT' | 'UNCERTAIN'
+
+/** Constituent item declaration within a packaged commodity. */
+export interface PackageItem {
+  item_index: number
+  commodity_name: string
+  item_count?: number | null
+  unit_quantity?: string | null
+  status?: DeclarationStatus | null
+  confidence?: number | null
+  source_image_index?: number | null
+  bounding_box?: BoundingBox | null
+}
+
+/** Structured container representing package composition and constituent items. */
+export interface PackageComposition {
+  package_type: PackageType
+  total_item_count: number
+  items: PackageItem[]
+  status?: DeclarationStatus | null
+  confidence?: number | null
+  statutory_note?: string | null
+}
+
 /** Consolidated outcome of the deterministic rules engine evaluation. */
 export interface ComplianceResult {
   verdict: ComplianceVerdict
@@ -142,6 +188,8 @@ export interface ComplianceResult {
   evidence?: EvidenceMetadata | null
   guidance?: InspectionGuidance | null
   scope_coverage?: ScopeCoverageManifest | null
+  qr_evidence?: QREvidence | null
+  composition?: PackageComposition | null
 }
 
 
@@ -213,6 +261,8 @@ export interface ScanResponse {
   reviewer_notes?: string | null
   guidance?: InspectionGuidance | null
   scope_coverage?: ScopeCoverageManifest | null
+  qr_evidence?: QREvidence | null
+  composition?: PackageComposition | null
   created_at: string
   completed_at?: string | null
 }

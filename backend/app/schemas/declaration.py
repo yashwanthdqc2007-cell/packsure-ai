@@ -105,3 +105,60 @@ class DeclarationExtractionPayload(BaseModel):
     declarations: List[ExtractedDeclaration] = Field(
         default_factory=list, description="List of extracted declarations"
     )
+
+
+class PackageType(str, Enum):
+    """Classification of packaging composition and multi-commodity bundling structure."""
+
+    SINGLE = "SINGLE"
+    MULTI_PIECE = "MULTI_PIECE"
+    COMBINATION = "COMBINATION"
+    GROUP = "GROUP"
+    KIT = "KIT"
+    UNCERTAIN = "UNCERTAIN"
+
+
+class PackageItem(BaseModel):
+    """Constituent commodity item within a multi-commodity, combination, or multi-piece package."""
+
+    item_index: int = Field(..., description="1-based sequence index of the constituent item")
+    commodity_name: str = Field(..., description="Common or generic name of the constituent commodity")
+    item_count: Optional[int] = Field(default=1, description="Count of units for this item")
+    unit_quantity: Optional[str] = Field(
+        default=None, description="Metric quantity of this item (e.g. '500 ml', '100 g', '1 N')"
+    )
+    status: DeclarationStatus = Field(
+        default=DeclarationStatus.detected, description="Detection status of the constituent item"
+    )
+    confidence: Optional[float] = Field(
+        default=1.0, ge=0.0, le=1.0, description="Extraction confidence score (0.0 to 1.0)"
+    )
+    source_image_index: Optional[int] = Field(
+        default=0, description="Zero-based index of originating image view"
+    )
+    bounding_box: Optional[BoundingBox] = Field(
+        default=None, description="Spatial bounding box on originating view"
+    )
+
+
+class PackageComposition(BaseModel):
+    """Structured evidence model for package composition and constituent commodities."""
+
+    package_type: PackageType = Field(
+        default=PackageType.SINGLE, description="Determined package composition type"
+    )
+    total_item_count: int = Field(
+        default=1, description="Total count of constituent items or units in the package"
+    )
+    items: List[PackageItem] = Field(
+        default_factory=list, description="Extracted constituent items"
+    )
+    status: DeclarationStatus = Field(
+        default=DeclarationStatus.detected, description="Overall composition confidence status"
+    )
+    confidence: Optional[float] = Field(
+        default=1.0, ge=0.0, le=1.0, description="Overall composition classification confidence"
+    )
+    statutory_note: Optional[str] = Field(
+        default=None, description="Factual description or note regarding package composition"
+    )

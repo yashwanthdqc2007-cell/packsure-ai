@@ -14,10 +14,11 @@ from typing import Any, Dict, List, Optional, Union
 from app.schemas.compliance import (
     ComplianceResult,
     ComplianceVerdict,
+    QREvidence,
     ScopeCoverageManifest,
     generate_scope_coverage_manifest,
 )
-from app.schemas.declaration import ExtractedDeclaration
+from app.schemas.declaration import ExtractedDeclaration, PackageComposition
 from app.schemas.violation import Violation
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ def compile_report_dict(
     is_complete_scan: Optional[bool] = None,
     guidance: Optional[Any] = None,
     scope_coverage: Optional[Union[ScopeCoverageManifest, Dict[str, Any]]] = None,
+    qr_evidence: Optional[Union[QREvidence, Dict[str, Any]]] = None,
+    composition: Optional[Union[PackageComposition, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Compile structured inspection report dictionary from scan domain models.
 
@@ -78,6 +81,8 @@ def compile_report_dict(
         is_complete_scan: Flag indicating complete panel coverage.
         guidance: Optional InspectionGuidance object or dictionary.
         scope_coverage: Optional ScopeCoverageManifest or dictionary.
+        qr_evidence: Optional QREvidence object or dictionary.
+        composition: Optional PackageComposition object or dictionary.
 
     Returns:
         Structured dictionary matching the canonical inspection report schema.
@@ -101,6 +106,10 @@ def compile_report_dict(
             guidance = compliance_result.guidance
         if scope_coverage is None and hasattr(compliance_result, "scope_coverage") and compliance_result.scope_coverage:
             scope_coverage = compliance_result.scope_coverage
+        if qr_evidence is None and hasattr(compliance_result, "qr_evidence") and compliance_result.qr_evidence:
+            qr_evidence = compliance_result.qr_evidence
+        if composition is None and hasattr(compliance_result, "composition") and compliance_result.composition:
+            composition = compliance_result.composition
 
     if scope_coverage is None:
         views_count = len(image_urls) if image_urls else (1 if image_path else 1)
@@ -182,6 +191,22 @@ def compile_report_dict(
         elif isinstance(scope_coverage, dict):
             serialized_scope_coverage = scope_coverage
 
+    # Serialize qr_evidence
+    serialized_qr_evidence: Optional[Dict[str, Any]] = None
+    if qr_evidence is not None:
+        if hasattr(qr_evidence, "model_dump"):
+            serialized_qr_evidence = qr_evidence.model_dump()
+        elif isinstance(qr_evidence, dict):
+            serialized_qr_evidence = qr_evidence
+
+    # Serialize composition
+    serialized_composition: Optional[Dict[str, Any]] = None
+    if composition is not None:
+        if hasattr(composition, "model_dump"):
+            serialized_composition = composition.model_dump()
+        elif isinstance(composition, dict):
+            serialized_composition = composition
+
     product_name = _extract_product_name(decls_list)
 
     report_dict: Dict[str, Any] = {
@@ -235,6 +260,12 @@ def compile_report_dict(
     if serialized_scope_coverage is not None:
         report_dict["scope_coverage"] = serialized_scope_coverage
 
+    if serialized_qr_evidence is not None:
+        report_dict["qr_evidence"] = serialized_qr_evidence
+
+    if serialized_composition is not None:
+        report_dict["composition"] = serialized_composition
+
     return report_dict
 
 
@@ -258,6 +289,8 @@ def generate_json_report(
     is_complete_scan: Optional[bool] = None,
     guidance: Optional[Any] = None,
     scope_coverage: Optional[Union[ScopeCoverageManifest, Dict[str, Any]]] = None,
+    qr_evidence: Optional[Union[QREvidence, Dict[str, Any]]] = None,
+    composition: Optional[Union[PackageComposition, Dict[str, Any]]] = None,
 ) -> str:
     """Generate and serialize a structured JSON inspection report to disk.
 
@@ -281,6 +314,8 @@ def generate_json_report(
         is_complete_scan: Complete scan flag.
         guidance: Optional InspectionGuidance.
         scope_coverage: Optional ScopeCoverageManifest or dictionary.
+        qr_evidence: Optional QREvidence or dictionary.
+        composition: Optional PackageComposition or dictionary.
 
     Returns:
         The file path where the report JSON was written.
@@ -304,6 +339,8 @@ def generate_json_report(
         is_complete_scan=is_complete_scan,
         guidance=guidance,
         scope_coverage=scope_coverage,
+        qr_evidence=qr_evidence,
+        composition=composition,
     )
 
     if not output_path:

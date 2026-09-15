@@ -13,7 +13,7 @@ from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-from app.schemas.declaration import ExtractedDeclaration
+from app.schemas.declaration import BoundingBox, ExtractedDeclaration, PackageComposition
 from app.schemas.guidance import InspectionGuidance
 from app.schemas.violation import Violation
 
@@ -28,6 +28,61 @@ class ComplianceVerdict(str, Enum):
 
 # Alias for canonical nomenclature
 Verdict = ComplianceVerdict
+
+
+class QREvidenceStatus(str, Enum):
+    """Status of QR code detection and decoding on package imagery."""
+
+    detected = "detected"
+    missing = "missing"
+    uncertain = "uncertain"
+
+
+class ElectronicApplicability(str, Enum):
+    """Statutory applicability determination for electronic products under Rule 6 / G.S.R. 456(E)."""
+
+    APPLICABLE = "APPLICABLE"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNCERTAIN = "UNCERTAIN"
+
+
+class QREvidence(BaseModel):
+    """Structured evidence package for QR code detection, decoding, and electronic product compliance."""
+
+    detected: bool = Field(
+        default=False, description="Whether a QR code was detected on the package view(s)"
+    )
+    status: QREvidenceStatus = Field(
+        default=QREvidenceStatus.missing, description="QR code detection/decode status: detected | missing | uncertain"
+    )
+    confidence: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Detection confidence score"
+    )
+    bounding_box: Optional[BoundingBox] = Field(
+        default=None, description="Bounding box of the primary QR code in unscaled image coordinates"
+    )
+    decoded_payload: Optional[str] = Field(
+        default=None, description="Decoded QR string payload (e.g. URL or text)"
+    )
+    payload_valid: Optional[bool] = Field(
+        default=None, description="Whether the payload is a valid URL or structured payload"
+    )
+    source_image_index: Optional[int] = Field(
+        default=None, description="Index of the package view where QR was detected"
+    )
+    instruction_detected: bool = Field(
+        default=False, description="Whether consumer instruction to scan QR is present on the physical package"
+    )
+    instruction_text: Optional[str] = Field(
+        default=None, description="Detected consumer scan instruction text snippet"
+    )
+    applicable_product: ElectronicApplicability = Field(
+        default=ElectronicApplicability.NOT_APPLICABLE,
+        description="Electronic product applicability determination under Rule 6 / G.S.R. 456(E)",
+    )
+    statutory_note: Optional[str] = Field(
+        default=None, description="Statutory compliance interpretation under Rule 6 / G.S.R. 456(E)"
+    )
 
 
 class EvidenceMetadata(BaseModel):
@@ -110,6 +165,8 @@ DEFAULT_IMAGE_VERIFIABLE_RULES: List[str] = [
     "Rule 6(1)(n) — Consumer care cell designation, phone number, and email address",
     "Rule 6(11) — Unit Sale Price (USP) calculation & mandatory statutory denominator",
     "Rule 26(a) — Small package statutory exemption threshold assessment (<= 10g or <= 10ml)",
+    "Rule 6(1) & G.S.R. 456(E) — Electronic product QR declaration applicability & scan-instruction checks",
+    "Multi-commodity package composition & constituent evidence extraction",
 ]
 
 DEFAULT_PHYSICAL_CHECKS_EXCLUDED: List[str] = [
@@ -124,6 +181,8 @@ DEFAULT_EXTERNAL_DATA_CHECKS_EXCLUDED: List[str] = [
     "State Legal Metrology Verification Stamp & Weight Calibration Certificate Verification",
     "Central Pollution Control Board (CPCB) Extended Producer Responsibility (EPR) Plastic Waste Registration",
     "FSSAI Food Safety License / CDSCO Medical Device Manufacturing License Verification",
+    "External QR Destination Web Content & Dynamic Landing Page Verification (Not Evaluated)",
+    "Physical verification of internal constituent contents within sealed multi-packs (verifies outer container declarations only)",
 ]
 
 
@@ -189,5 +248,11 @@ class ComplianceResult(BaseModel):
     )
     scope_coverage: Optional[ScopeCoverageManifest] = Field(
         default=None, description="Explicit statutory inspection scope, visual coverage, and physical/external exclusions"
+    )
+    qr_evidence: Optional[QREvidence] = Field(
+        default=None, description="Structured QR code detection, decoding, and electronic product compliance evidence"
+    )
+    composition: Optional[PackageComposition] = Field(
+        default=None, description="Structured package composition and constituent items evidence"
     )
 

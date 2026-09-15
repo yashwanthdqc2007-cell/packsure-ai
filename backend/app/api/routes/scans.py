@@ -29,6 +29,7 @@ from app.core.config import settings
 from app.database.connection import BaseScanRepository
 from app.schemas.compliance import (
     ComplianceVerdict,
+    QREvidence,
     ScopeCoverageManifest,
     generate_scope_coverage_manifest,
 )
@@ -36,6 +37,7 @@ from app.schemas.declaration import (
     DeclarationSource,
     DeclarationStatus,
     ExtractedDeclaration,
+    PackageComposition,
 )
 from app.schemas.guidance import InspectionGuidance
 from app.schemas.scan import (
@@ -339,8 +341,10 @@ def get_scan(
         elif isinstance(raw_guidance, InspectionGuidance):
             guidance_obj = raw_guidance
 
-    # Construct deterministic ScopeCoverageManifest
+    # Construct deterministic ScopeCoverageManifest, QREvidence, and PackageComposition
     scope_manifest_obj = None
+    qr_evidence_obj = None
+    composition_obj = None
     report_json_path = os.path.join(LOCAL_STORAGE_BASE, id, "report.json")
     if os.path.exists(report_json_path):
         try:
@@ -348,8 +352,12 @@ def get_scan(
                 report_data = json.load(rf)
                 if "scope_coverage" in report_data:
                     scope_manifest_obj = ScopeCoverageManifest.model_validate(report_data["scope_coverage"])
+                if "qr_evidence" in report_data and report_data["qr_evidence"]:
+                    qr_evidence_obj = QREvidence.model_validate(report_data["qr_evidence"])
+                if "composition" in report_data and report_data["composition"]:
+                    composition_obj = PackageComposition.model_validate(report_data["composition"])
         except Exception as e:
-            logger.debug(f"Could not load scope_coverage from report artifact for {id}: {e}")
+            logger.debug(f"Could not load metadata from report artifact for {id}: {e}")
 
     if scope_manifest_obj is None:
         views_cnt = len(raw_img_urls) if raw_img_urls else (1 if scan.get("image_url") else 1)
@@ -375,6 +383,8 @@ def get_scan(
         reviewer_notes=scan.get("reviewer_notes"),
         guidance=guidance_obj,
         scope_coverage=scope_manifest_obj,
+        qr_evidence=qr_evidence_obj,
+        composition=composition_obj,
         created_at=scan.get("created_at", datetime.now(timezone.utc).isoformat()),
         completed_at=scan.get("completed_at"),
     )

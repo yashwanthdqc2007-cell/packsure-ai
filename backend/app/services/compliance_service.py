@@ -31,7 +31,9 @@ from app.rules.rule_engine import rule_engine
 from app.schemas.compliance import (
     ComplianceResult,
     ComplianceVerdict,
+    ElectronicApplicability,
     EvidenceMetadata,
+    QREvidence,
     generate_scope_coverage_manifest,
 )
 from app.schemas.declaration import ExtractedDeclaration
@@ -40,7 +42,12 @@ from app.schemas.violation import Violation, ViolationSeverity, ViolationType
 from app.services.ai_service import extract_declarations
 from app.services.evidence_service import render_evidence_overlay
 from app.services.fusion_service import fuse_declarations
+from app.services.composition_service import (
+    extract_package_composition,
+    reconcile_package_composition_across_views,
+)
 from app.services.guidance_service import generate_inspection_guidance
+from app.services.qr_service import evaluate_qr_evidence_across_views
 from app.services.image_service import (
     DESKEW_MAX_ANGLE_LIMIT,
     DESKEW_MIN_ANGLE_TRIGGER,
@@ -62,6 +69,60 @@ class PackageViewPayload:
     file_bytes: bytes
     filename: str = ""
     view_label: Optional[str] = None
+
+
+def _apply_electronic_qr_compliance(
+    compliance_result: ComplianceResult,
+    images: Sequence[Optional[np.ndarray]],
+    ocr_texts: Optional[Sequence[str]] = None,
+    product_category: Optional[str] = None,
+) -> None:
+    """Evaluate QR evidence and apply Rule 6 / G.S.R. 456(E) electronic product QR adjustments."""
+    qr_evidence = evaluate_qr_evidence_across_views(
+        images=images,
+        ocr_texts=ocr_texts,
+        product_category=product_category,
+        declarations=compliance_result.declarations,
+    )
+    compliance_result.qr_evidence = qr_evidence
+
+    # If this is an applicable electronic product with detected QR and scan instruction
+    if (
+        qr_evidence.applicable_product == ElectronicApplicability.APPLICABLE
+        and qr_evidence.detected
+        and qr_evidence.instruction_detected
+        and qr_evidence.payload_valid
+    ):
+        offloadable_fields = {"manufacturer_name_and_address", "country_of_origin", "manufacture_date"}
+        updated_violations = []
+        has_qr_offload = False
+
+        for v in compliance_result.violations:
+            if v.field_name in offloadable_fields and v.violation_type == ViolationType.missing_declaration:
+                has_qr_offload = True
+                updated_violations.append(
+                    v.model_copy(
+                        update={
+                            "severity": ViolationSeverity.minor,
+                            "description": (
+                                f"{v.field_name.replace('_', ' ').title()} declared via QR code under Rule 6 / G.S.R. 456(E). "
+                                "Physical inspector verification of QR destination web page required."
+                            ),
+                        }
+                    )
+                )
+            else:
+                updated_violations.append(v)
+
+        compliance_result.violations = updated_violations
+
+        # If scan had failed purely because of offloadable fields that are declared via QR, route verdict to NEEDS_REVIEW
+        if has_qr_offload and compliance_result.verdict == ComplianceVerdict.FAIL:
+            has_blocking_violations = any(
+                viol.severity == ViolationSeverity.critical for viol in compliance_result.violations
+            )
+            if not has_blocking_violations:
+                compliance_result.verdict = ComplianceVerdict.NEEDS_REVIEW
 
 
 def process_compliance_inspection(
@@ -220,7 +281,26 @@ def process_compliance_inspection(
             ),
         )
 
-    # 7. Visual Evidence Rendering & Coordinate Safety Verification
+    # 7. Apply Electronic QR Compliance Evaluation under Rule 6 / G.S.R. 456(E)
+    _apply_electronic_qr_compliance(
+        compliance_result=compliance_result,
+        images=[image],
+        ocr_texts=[ocr_result.text] if "ocr_result" in locals() and ocr_result and hasattr(ocr_result, "text") else [],
+        product_category=product_category,
+    )
+
+    # 8. Extract Package Composition & Multi-Commodity Structure (Phase 4C)
+    try:
+        compliance_result.composition = extract_package_composition(
+            declarations=compliance_result.declarations,
+            ocr_texts=[ocr_result.text] if "ocr_result" in locals() and ocr_result and hasattr(ocr_result, "text") else [],
+            product_category=product_category,
+            is_complete_scan=is_complete_scan,
+        )
+    except Exception as comp_err:
+        logger.warning(f"Package composition extraction encountered a non-fatal error: {comp_err}")
+
+    # 9. Visual Evidence Rendering & Coordinate Safety Verification
     try:
         if is_deskewed:
             logger.info(
@@ -248,7 +328,7 @@ def process_compliance_inspection(
     except Exception as rend_err:
         logger.warning(f"Visual evidence rendering encountered a non-fatal error: {rend_err}")
 
-    # 8. Generate Intelligent Recapture Guidance
+    # 9. Generate Intelligent Recapture Guidance
     compliance_result.guidance = generate_inspection_guidance(
         quality_reports=[quality_report],
         compliance_result=compliance_result,
@@ -256,7 +336,7 @@ def process_compliance_inspection(
         product_category=product_category,
     )
 
-    # 9. Generate Deterministic Scope Coverage Manifest
+    # 10. Generate Deterministic Scope Coverage Manifest
     compliance_result.scope_coverage = generate_scope_coverage_manifest(
         views_captured_count=1,
         is_complete_scan=is_complete_scan,
@@ -312,6 +392,7 @@ def process_multi_view_compliance_from_bytes(
     decoded_images: List[Optional[np.ndarray]] = []
     all_views_declarations: List[List[ExtractedDeclaration]] = []
     is_deskewed_flags: List[bool] = []
+    all_ocr_texts: List[str] = []
 
     # 1. Independent per-view processing
     for view_idx, view in enumerate(views):
@@ -383,6 +464,7 @@ def process_multi_view_compliance_from_bytes(
         # OCR
         try:
             ocr_result = extract_raw_ocr(ocr_binarized)
+            all_ocr_texts.append(ocr_result.text if ocr_result and hasattr(ocr_result, "text") else "")
         except Exception as ocr_err:
             logger.error(f"OCR extraction failed on view {view_idx}: {ocr_err}")
             fail_res = ComplianceResult(
@@ -484,7 +566,33 @@ def process_multi_view_compliance_from_bytes(
         compliance_result.verdict = ComplianceVerdict.NEEDS_REVIEW
         compliance_result.compliance_score = min(compliance_result.compliance_score, 50.0)
 
-    # 4. Evidence Rendering per View (Coordinate-safe, view-anchored)
+    # 4. Apply Electronic QR Compliance Evaluation under Rule 6 / G.S.R. 456(E)
+    _apply_electronic_qr_compliance(
+        compliance_result=compliance_result,
+        images=decoded_images,
+        ocr_texts=all_ocr_texts,
+        product_category=product_category,
+    )
+
+    # 5. Extract & Reconcile Package Composition across Views (Phase 4C)
+    try:
+        view_compositions = [
+            extract_package_composition(
+                declarations=v_decls,
+                ocr_texts=[all_ocr_texts[i]] if i < len(all_ocr_texts) else [],
+                product_category=product_category,
+                is_complete_scan=is_complete_scan,
+            )
+            for i, v_decls in enumerate(all_views_declarations)
+        ]
+        compliance_result.composition = reconcile_package_composition_across_views(
+            view_compositions=view_compositions,
+            is_complete_scan=is_complete_scan,
+        )
+    except Exception as comp_err:
+        logger.warning(f"Multi-view package composition extraction encountered a non-fatal error: {comp_err}")
+
+    # 6. Evidence Rendering per View (Coordinate-safe, view-anchored)
     evidence_paths: List[str] = []
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)

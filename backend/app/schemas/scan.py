@@ -18,8 +18,16 @@ from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-from app.schemas.compliance import ComplianceVerdict, ScopeCoverageManifest
-from app.schemas.declaration import CorrectedDeclaration, ExtractedDeclaration
+from app.schemas.compliance import (
+    ComplianceVerdict,
+    QREvidence,
+    ScopeCoverageManifest,
+)
+from app.schemas.declaration import (
+    CorrectedDeclaration,
+    ExtractedDeclaration,
+    PackageComposition,
+)
 from app.schemas.guidance import InspectionGuidance
 from app.schemas.violation import Violation
 
@@ -111,6 +119,12 @@ class ScanResponse(BaseModel):
     )
     scope_coverage: Optional[ScopeCoverageManifest] = Field(
         default=None, description="Explicit statutory inspection scope, visual coverage, and physical/external exclusions"
+    )
+    qr_evidence: Optional[QREvidence] = Field(
+        default=None, description="Structured QR code detection, decoding, and electronic product compliance evidence"
+    )
+    composition: Optional[PackageComposition] = Field(
+        default=None, description="Structured package composition and constituent items evidence"
     )
     created_at: str = Field(..., description="ISO8601 creation timestamp")
     completed_at: Optional[str] = Field(

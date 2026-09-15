@@ -17,6 +17,8 @@ import {
   Image as ImageIcon,
   Layers,
   Loader2,
+  Package as PackageIcon,
+  QrCode,
   RefreshCw,
   Scale,
   ShieldAlert,
@@ -993,6 +995,167 @@ export const InspectionDetailsPage: React.FC = () => {
                 </div>
               </div>
             </Card>
+
+            {/* QR & Electronic Declarations Evidence (Phase 4B - Rule 6 / G.S.R. 456(E)) */}
+            <Card
+              title="QR & Electronic Declarations"
+              subtitle="Statutory evaluation under Rule 6 / G.S.R. 456(E) for packaged electronic products"
+            >
+              <div className="space-y-3 text-xs">
+                {/* Status Badges Grid */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">QR Detection</span>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <QrCode className="w-3.5 h-3.5 text-brand-blue" />
+                      <span className="font-semibold text-slate-800 capitalize">
+                        {scan?.qr_evidence?.status || (scan?.qr_evidence?.detected ? 'Detected' : 'Not Detected')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Applicability</span>
+                    <span
+                      className={`font-semibold inline-block mt-1 px-1.5 py-0.5 rounded text-[11px] ${
+                        scan?.qr_evidence?.applicable_product === 'APPLICABLE'
+                          ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                          : scan?.qr_evidence?.applicable_product === 'NOT_APPLICABLE'
+                          ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                          : 'bg-amber-50 text-amber-800 border border-amber-200'
+                      }`}
+                    >
+                      {scan?.qr_evidence?.applicable_product || 'UNCERTAIN'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Scan Instruction Status */}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-700">Consumer Scan Instruction:</span>
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                        scan?.qr_evidence?.instruction_detected
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {scan?.qr_evidence?.instruction_detected ? 'Detected' : 'Not Detected'}
+                    </span>
+                  </div>
+                  {scan?.qr_evidence?.instruction_text && (
+                    <p className="text-[11px] text-slate-600 italic bg-white p-1.5 rounded border border-slate-200 mt-1">
+                      "{scan.qr_evidence.instruction_text}"
+                    </p>
+                  )}
+                </div>
+
+                {/* Decoded Payload (if available) */}
+                {scan?.qr_evidence?.decoded_payload && (
+                  <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-lg space-y-1">
+                    <span className="text-[10px] font-bold text-blue-900 uppercase tracking-wider block">Decoded QR Payload</span>
+                    <code className="text-[11px] font-mono text-blue-950 break-all bg-white/80 p-1.5 rounded block border border-blue-100">
+                      {scan.qr_evidence.decoded_payload}
+                    </code>
+                    <p className="text-[10px] text-blue-800 mt-0.5">
+                      ⚠️ Note: External URL payload recorded as audit evidence; external destination content is not automatically browsed or statutory-verified.
+                    </p>
+                  </div>
+                )}
+
+                {/* Bounding Box (if available) */}
+                {scan?.qr_evidence?.bounding_box && (
+                  <div className="text-[10px] text-slate-500 flex items-center gap-1 font-mono">
+                    <span>Coordinates: [x: {scan.qr_evidence.bounding_box.x}, y: {scan.qr_evidence.bounding_box.y}, w: {scan.qr_evidence.bounding_box.width}, h: {scan.qr_evidence.bounding_box.height}]</span>
+                  </div>
+                )}
+
+                {/* Statutory Note & Legal Guardrail */}
+                <div className="pt-1 text-[10px] text-slate-400 italic leading-relaxed border-t border-slate-100">
+                  {scan?.qr_evidence?.statutory_note ||
+                    'Under Rule 6 as amended by G.S.R. 456(E), electronic products may provide select declarations via QR code provided an explicit consumer scan instruction is present on the package.'}
+                </div>
+              </div>
+            </Card>
+
+            {/* Package Composition Card (Phase 4C - Multi-Commodity & Package Structure) */}
+            {scan?.composition && (scan.composition.package_type !== 'SINGLE' || scan.composition.items.length > 1) && (
+              <Card
+                title="Package Composition"
+                subtitle="Constituent commodity classification and itemized package structure"
+              >
+                <div className="space-y-3 text-xs">
+                  {/* Composition Classification Header */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Package Type</span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <PackageIcon className="w-3.5 h-3.5 text-brand-blue" />
+                        <span className="font-semibold text-slate-800 capitalize">
+                          {scan.composition.package_type.replace('_', ' ')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Items & Status</span>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="font-semibold text-slate-800">
+                          {scan.composition.total_item_count} Item{scan.composition.total_item_count > 1 ? 's' : ''}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                            scan.composition.status === 'detected'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-amber-100 text-amber-800 border border-amber-200'
+                          }`}
+                        >
+                          {scan.composition.status === 'detected' ? 'CONFIRMED' : 'UNCERTAIN'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Constituent Items List */}
+                  {scan.composition.items && scan.composition.items.length > 0 && (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden">
+                      <table className="min-w-full divide-y divide-slate-200 text-[11px]">
+                        <thead className="bg-slate-50 font-semibold text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2 text-left">#</th>
+                            <th className="px-3 py-2 text-left">Constituent Commodity</th>
+                            <th className="px-3 py-2 text-left">Unit Qty / Count</th>
+                            <th className="px-3 py-2 text-right">Evidence</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {scan.composition.items.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/50">
+                              <td className="px-3 py-2 font-mono text-slate-500 font-bold">{item.item_index || idx + 1}</td>
+                              <td className="px-3 py-2 font-medium text-slate-900">{item.commodity_name}</td>
+                              <td className="px-3 py-2 font-mono text-slate-700">
+                                {item.unit_quantity || (item.item_count ? `${item.item_count} N` : '—')}
+                              </td>
+                              <td className="px-3 py-2 text-right text-slate-500">
+                                View {(item.source_image_index || 0) + 1}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Statutory Note */}
+                  {scan.composition.statutory_note && (
+                    <div className="pt-1 text-[10px] text-slate-400 italic leading-relaxed border-t border-slate-100">
+                      {scan.composition.statutory_note}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            )}
 
             {/* Inspection Quality Issues (e.g. QUALITY-REJECT) */}
             {qualityIssues.length > 0 && (
